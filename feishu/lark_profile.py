@@ -34,5 +34,7 @@ def sync_lark_profile(
         timeout=30,
     )
     if result.returncode:
-        detail = (result.stderr or result.stdout or "lark-cli config failed")[:300]
-        raise RuntimeError(detail.replace(secret, "[REDACTED]"))
+        detail = (result.stderr or result.stdout or "lark-cli config failed").replace(
+            secret, "[REDACTED]"
+        )
+        raise RuntimeError(detail[:300])
