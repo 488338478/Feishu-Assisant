@@ -230,10 +230,16 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
         raise RuntimeError(stderr or "Claude empty response")
     return result_text, new_sid, tool_count
 
-def _build_prompt(text: str, sender_id: str, tier: str, profile: str) -> str:
+def _build_prompt(text: str, sender_id: str, tier: str, profile: str,
+                  force_user_domain: str | None = None) -> str:
     """消息前缀：动态用户信息 + 语义记忆召回（静态人设/规则在 profile 的 CLAUDE.md）。"""
     parts = [f"[当前用户] open_id={sender_id or '未知'} | profile={profile} | "
              f"权限层级={tier}（{TIER_DESC[tier]}）"]
+    if force_user_domain:
+        parts.append(
+            "[可信运行时状态] 飞书用户授权已完成；本次操作必须使用 "
+            f"`--as user`，domain={force_user_domain}。不得再次请求授权。"
+        )
     try:
         mem = memory.format_context(query=text, top_k=5)
         if mem:
@@ -248,7 +254,7 @@ def _build_prompt(text: str, sender_id: str, tier: str, profile: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None,
-        progress_cb=None) -> tuple[str, dict]:
+        progress_cb=None, force_user_domain: str | None = None) -> tuple[str, dict]:
     """处理一条消息：解析 profile/tier → 单次 CLI 调用。
 
     返回 (最终文本, stats{ok, tools, duration, err})。
@@ -263,7 +269,9 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
 
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
-    prompt = _build_prompt(text, sender_id, tier, profile)
+    prompt = _build_prompt(
+        text, sender_id, tier, profile, force_user_domain=force_user_domain
+    )
 
     t0 = time.time()
     ok, err, tools = True, "", 0

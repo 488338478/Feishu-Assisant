@@ -95,6 +95,9 @@ class HandlerAuthTests(unittest.TestCase):
         self.assertEqual(result, "已找到文档")
         manager.ensure_user.assert_called_once()
         self.assertEqual(handlers.runtime.run.call_count, 2)
+        retry_call = handlers.runtime.run.call_args_list[1]
+        self.assertEqual(retry_call.args[1], "搜索项目周报")
+        self.assertEqual(retry_call.kwargs["force_user_domain"], "docs")
 
     def test_auth_marker_failure_does_not_retry_forever(self):
         handlers.runtime.run.return_value = (
@@ -110,6 +113,22 @@ class HandlerAuthTests(unittest.TestCase):
 
         self.assertEqual(result, "授权失败")
         self.assertEqual(handlers.runtime.run.call_count, 1)
+
+    def test_second_auth_marker_returns_clear_error_not_internal_marker(self):
+        handlers.runtime.run.return_value = (
+            "[LARK_USER_AUTH_REQUIRED:docs]",
+            {"ok": True, "tools": 1, "duration": 0.2},
+        )
+        manager = MagicMock()
+        manager.ensure_user.return_value = AuthResult(True)
+        with patch.object(handlers, "auth_manager", manager):
+            result = handlers.process_message(
+                "搜索项目周报", "chat", "user", self.client
+            )
+
+        self.assertNotIn("LARK_USER_AUTH_REQUIRED", result)
+        self.assertIn("授权已完成", result)
+        self.assertEqual(handlers.runtime.run.call_count, 2)
 
 
 if __name__ == "__main__":

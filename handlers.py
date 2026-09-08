@@ -74,9 +74,19 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
         if not auth_result.ok:
             return auth_result.message
         retry_response, retry_stats = runtime.run(
-            chat_id, text, sender_id=sender_id, progress_cb=progress_cb
+            chat_id,
+            text,
+            sender_id=sender_id,
+            progress_cb=progress_cb,
+            force_user_domain=fallback_domain,
         )
-        response = retry_response
+        if auth_required_domain(retry_response):
+            response = (
+                "飞书授权已完成，但用户身份调用仍未成功。"
+                "请稍后重试；若持续出现，请联系管理员检查应用权限。"
+            )
+        else:
+            response = retry_response
         stats = {
             **retry_stats,
             "tools": stats.get("tools", 0) + retry_stats.get("tools", 0),
