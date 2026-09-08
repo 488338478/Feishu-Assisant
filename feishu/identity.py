@@ -24,3 +24,12 @@ def required_user_domain(text: str) -> str | None:
         if any(term in normalized for term in terms):
             return domain
     return None
+
+
+def auth_required_domain(text: str) -> str | None:
+    """Extract the private runtime marker emitted after a bot auth failure."""
+    match = re.search(
+        r"\[LARK_USER_AUTH_REQUIRED:(docs|drive|wiki|calendar|task|vc|minutes|mail|attendance|contact|im)\]",
+        text or "",
+    )
+    return match.group(1) if match else None

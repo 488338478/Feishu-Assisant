@@ -14,7 +14,7 @@ from .config import LARK_CLI_PROFILE
 from .core.memory import memory
 from .core.scheduler import scheduler, PUSH_TARGET_MARKER
 from .feishu.auth import LarkAuthManager
-from .feishu.identity import required_user_domain
+from .feishu.identity import auth_required_domain, required_user_domain
 
 
 auth_manager = LarkAuthManager(LARK_CLI_PROFILE)
@@ -63,6 +63,25 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
     # agent 处理
     response, stats = runtime.run(chat_id, text, sender_id=sender_id,
                                   progress_cb=progress_cb)
+
+    # bot-first 调用若确认必须使用 user，由 Python 统一授权并只重试一次。
+    fallback_domain = auth_required_domain(response)
+    if fallback_domain:
+        auth_result = auth_manager.ensure_user(
+            fallback_domain,
+            lambda message: send_message(client, chat_id, message),
+        )
+        if not auth_result.ok:
+            return auth_result.message
+        retry_response, retry_stats = runtime.run(
+            chat_id, text, sender_id=sender_id, progress_cb=progress_cb
+        )
+        response = retry_response
+        stats = {
+            **retry_stats,
+            "tools": stats.get("tools", 0) + retry_stats.get("tools", 0),
+            "duration": stats.get("duration", 0) + retry_stats.get("duration", 0),
+        }
     if progress["mid"]:
         update_message(client, progress["mid"],
                        f"✅ 完成：工具调用 {stats['tools']} 次，耗时 {stats['duration']:.0f}s")
