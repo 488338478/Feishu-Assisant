@@ -15,3 +15,6 @@ data/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 隔离开发工作区
+.worktrees/
