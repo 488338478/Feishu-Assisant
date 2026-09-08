@@ -10,8 +10,14 @@ from .feishu.client import (
     send_progress_message, update_message,
 )
 from .agent import runtime
+from .config import LARK_CLI_PROFILE
 from .core.memory import memory
 from .core.scheduler import scheduler, PUSH_TARGET_MARKER
+from .feishu.auth import LarkAuthManager
+from .feishu.identity import required_user_domain
+
+
+auth_manager = LarkAuthManager(LARK_CLI_PROFILE)
 
 # ═══════════════════════════════════════════════════════════════════════
 # 消息处理
@@ -28,6 +34,16 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
     # 权限查询命令
     if any(kw in text for kw in ["我的权限", "查看权限"]):
         return runtime.describe_access(chat_id, sender_id)
+
+    # 个人资源才预检 user OAuth；共享资源保持 bot-first。
+    user_domain = required_user_domain(text)
+    if user_domain:
+        auth_result = auth_manager.ensure_user(
+            user_domain,
+            lambda message: send_message(client, chat_id, message),
+        )
+        if not auth_result.ok:
+            return auth_result.message
 
     # 进度消息：首次工具调用时发出，之后节流原地编辑，收尾改成完成摘要
     progress = {"mid": None, "events": [], "last_edit": 0.0}
