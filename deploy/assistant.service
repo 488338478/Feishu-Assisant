@@ -1,0 +1,22 @@
+[Unit]
+Description=Feishu Assistant Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+WorkingDirectory=/srv/agent
+EnvironmentFile=/srv/agent/assistant.env
+ExecStart=/srv/agent/venv/bin/python -m assistant.main
+Restart=always
+RestartSec=5
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

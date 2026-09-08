@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+*.env
+!deploy/env.example
+
+# 运行时状态、用户标识、审计记录和会话信息
+data/
+
+# 本地 IDE / OS 文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

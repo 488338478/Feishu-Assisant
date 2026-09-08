@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "Bash(lark-cli:*)",
+      "Bash(p4 info:*)",
+      "Bash(p4 where:*)",
+      "Bash(p4 files:*)",
+      "Bash(p4 have:*)",
+      "Bash(p4 status:*)",
+      "Bash(p4 opened:*)",
+      "Bash(p4 changes:*)",
+      "Bash(p4 describe:*)",
+      "Bash(p4 diff:*)",
+      "Bash(p4 diff2:*)",
+      "Bash(p4 annotate:*)",
+      "Bash(p4 filelog:*)",
+      "Bash(p4 edit:*)",
+      "Bash(p4 add:*)",
+      "Bash(p4 submit:*)",
+      "Bash(p4 sync:*)"
+    ],
+    "deny": [
+      "NotebookEdit",
+      "Bash(p4 revert:*)",
+      "Bash(p4 delete:*)",
+      "Bash(p4 undo:*)",
+      "Bash(p4 resolve:*)",
+      "Bash(rm:*)",
+      "Bash(sudo:*)",
+      "Bash(lark-cli api DELETE:*)",
+      "Bash(lark-cli drive +delete:*)"
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lark-cli:*)"
+    ],
+    "deny": [
+      "Read",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Bash(lark-cli api DELETE:*)",
+      "Bash(lark-cli drive +delete:*)",
+      "Bash(rm:*)",
+      "Bash(sudo:*)"
+    ]
+  }
+}
