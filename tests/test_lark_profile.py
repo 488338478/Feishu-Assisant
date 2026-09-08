@@ -28,6 +28,7 @@ class SyncLarkProfileTests(unittest.TestCase):
                 "LARK_CLI_PROFILE": "assistant-bot",
             },
             fake_run,
+            executable="lark-cli",
         )
 
         argv, kwargs = calls[0]
@@ -54,7 +55,7 @@ class SyncLarkProfileTests(unittest.TestCase):
             self.fail("lark-cli must not run without credentials")
 
         with self.assertRaisesRegex(RuntimeError, "missing Feishu credentials"):
-            sync_lark_profile({}, unexpected_run)
+            sync_lark_profile({}, unexpected_run, executable="lark-cli")
 
     def test_sync_redacts_secret_from_cli_failure(self):
         def fake_run(argv, **kwargs):
@@ -70,6 +71,7 @@ class SyncLarkProfileTests(unittest.TestCase):
                     "LARK_CLI_PROFILE": "assistant-bot",
                 },
                 fake_run,
+                executable="lark-cli",
             )
 
         self.assertNotIn("secret-value", str(raised.exception))
@@ -88,6 +90,7 @@ class SyncLarkProfileTests(unittest.TestCase):
                     "LARK_CLI_PROFILE": "assistant-bot",
                 },
                 fake_run,
+                executable="lark-cli",
             )
 
         self.assertNotIn(secret[:5], str(raised.exception))

@@ -6,6 +6,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .lark_command import resolve_lark_cli
+
 
 @dataclass(frozen=True)
 class AuthResult:
@@ -19,10 +21,12 @@ class LarkAuthManager:
         profile: str,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         timeout: int = 300,
+        executable: str | None = None,
     ) -> None:
         self.profile = profile
         self.runner = runner
         self.timeout = timeout
+        self.executable = executable or resolve_lark_cli()
         self._condition = threading.Condition()
         self._inflight = False
         self._generation = 0
@@ -30,7 +34,7 @@ class LarkAuthManager:
 
     def _run(self, args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
         return self.runner(
-            ["lark-cli", "--profile", self.profile, *args],
+            [self.executable, "--profile", self.profile, *args],
             text=True,
             capture_output=True,
             timeout=timeout,

@@ -37,7 +37,9 @@ class LarkAuthManagerTests(unittest.TestCase):
         runner = QueueRunner([completed({"identity": "user"})])
         messages = []
 
-        result = LarkAuthManager("assistant-bot", runner=runner).ensure_user(
+        result = LarkAuthManager(
+            "assistant-bot", runner=runner, executable="lark-cli"
+        ).ensure_user(
             "calendar", messages.append
         )
 
@@ -57,7 +59,9 @@ class LarkAuthManagerTests(unittest.TestCase):
         ])
         messages = []
 
-        result = LarkAuthManager("assistant-bot", runner=runner).ensure_user(
+        result = LarkAuthManager(
+            "assistant-bot", runner=runner, executable="lark-cli"
+        ).ensure_user(
             "calendar", messages.append
         )
 
@@ -77,7 +81,9 @@ class LarkAuthManagerTests(unittest.TestCase):
                       stderr="The client secret is invalid: private-value"),
         ])
 
-        result = LarkAuthManager("assistant-bot", runner=runner).ensure_user(
+        result = LarkAuthManager(
+            "assistant-bot", runner=runner, executable="lark-cli"
+        ).ensure_user(
             "calendar", lambda _: None
         )
 
@@ -106,7 +112,9 @@ class LarkAuthManagerTests(unittest.TestCase):
                 })
             return completed({"ok": True})
 
-        manager = LarkAuthManager("assistant-bot", runner=runner)
+        manager = LarkAuthManager(
+            "assistant-bot", runner=runner, executable="lark-cli"
+        )
         results = []
         notifications = []
         threads = [

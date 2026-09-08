@@ -4,10 +4,13 @@ import os
 import subprocess
 from collections.abc import Callable, Mapping
 
+from .lark_command import resolve_lark_cli
+
 
 def sync_lark_profile(
     env: Mapping[str, str] = os.environ,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    executable: str | None = None,
 ) -> None:
     app_id = env.get("FEISHU_APP_ID", "")
     secret = env.get("FEISHU_APP_SECRET", "")
@@ -17,7 +20,7 @@ def sync_lark_profile(
 
     result = run(
         [
-            "lark-cli",
+            executable or resolve_lark_cli(),
             "config",
             "init",
             "--name",
