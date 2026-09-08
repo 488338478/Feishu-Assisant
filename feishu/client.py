@@ -9,6 +9,7 @@ import subprocess
 import threading
 
 import lark_oapi as lark
+from lark_oapi.core import AccessTokenType, BaseRequest, HttpMethod
 from lark_oapi.api.im.v1 import *
 
 from ..config import APP_ID, APP_SECRET, LARK_CLI_PROFILE, LARK_CLI_TIMEOUT
@@ -61,6 +62,23 @@ def build_client():
             if _client is None:
                 _client = lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
     return _client
+
+
+def fetch_bot_open_id(client) -> str:
+    """Return this application's bot open_id, or empty string to fail closed."""
+    request = BaseRequest.builder() \
+        .http_method(HttpMethod.GET) \
+        .uri("/open-apis/bot/v3/info") \
+        .token_types({AccessTokenType.TENANT}) \
+        .build()
+    try:
+        response = client.request(request)
+        if not response.success() or response.raw is None:
+            return ""
+        payload = json.loads(response.raw.content.decode("utf-8"))
+        return str((payload.get("bot") or {}).get("open_id") or "")
+    except Exception:
+        return ""
 
 # ═══════════════════════════════════════════════════════════════════════
 # 消息发送

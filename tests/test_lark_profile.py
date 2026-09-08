@@ -137,10 +137,21 @@ class StartupOrderTests(unittest.TestCase):
         with (
             patch.object(main_module, "APP_ID", "cli_test"),
             patch.object(main_module, "APP_SECRET", "test-secret"),
+            patch.object(main_module, "build_client", return_value=object()),
             patch.object(
                 main_module,
                 "sync_lark_profile",
                 side_effect=lambda env: events.append("profile-sync"),
+            ),
+            patch.object(
+                main_module,
+                "fetch_bot_open_id",
+                side_effect=lambda client: events.append("bot-fetch") or "bot-id",
+            ),
+            patch.object(
+                main_module,
+                "set_bot_open_id",
+                side_effect=lambda open_id: events.append("bot-set"),
             ),
             patch.object(main_module, "scheduler", fake_scheduler),
             patch.object(main_module.threading, "Thread", FakeThread),
@@ -158,7 +169,10 @@ class StartupOrderTests(unittest.TestCase):
         ):
             main_module.main()
 
-        self.assertEqual(events[:3], ["profile-sync", "scheduler", "websocket"])
+        self.assertEqual(
+            events[:5],
+            ["profile-sync", "bot-fetch", "bot-set", "scheduler", "websocket"],
+        )
 
 
 if __name__ == "__main__":

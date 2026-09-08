@@ -16,11 +16,11 @@ import threading
 import lark_oapi as lark
 
 from .config import APP_ID, APP_SECRET
-from .feishu.client import build_client, send_message
+from .feishu.client import build_client, fetch_bot_open_id, send_message
 from .feishu.lark_profile import sync_lark_profile
 from .core.memory import memory
 from .core.scheduler import scheduler
-from .handlers import on_message, on_doc_comment
+from .handlers import on_message, on_doc_comment, set_bot_open_id
 
 def main():
     if not APP_ID or not APP_SECRET:
@@ -33,6 +33,14 @@ def main():
         print("[FATAL] lark-cli 配置同步失败", flush=True)
         sys.exit(1)
     print("[LARK-CLI] 配置同步成功", flush=True)
+
+    client = build_client()
+    bot_open_id = fetch_bot_open_id(client)
+    set_bot_open_id(bot_open_id)
+    if bot_open_id:
+        print("[BOT] 群聊仅响应 @机器人", flush=True)
+    else:
+        print("[WARN] 无法获取机器人身份，群聊消息将全部忽略", flush=True)
 
     print("=" * 60, flush=True)
     print("飞书知识库助手 Bot 启动中...", flush=True)

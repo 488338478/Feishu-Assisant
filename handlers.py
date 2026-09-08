@@ -15,9 +15,16 @@ from .core.memory import memory
 from .core.scheduler import scheduler, PUSH_TARGET_MARKER
 from .feishu.auth import LarkAuthManager
 from .feishu.identity import auth_required_domain, required_user_domain
+from .feishu.message_gate import message_targets_bot, strip_bot_mention
 
 
 auth_manager = LarkAuthManager(LARK_CLI_PROFILE)
+BOT_OPEN_ID = ""
+
+
+def set_bot_open_id(open_id: str) -> None:
+    global BOT_OPEN_ID
+    BOT_OPEN_ID = open_id
 
 # ═══════════════════════════════════════════════════════════════════════
 # 消息处理
@@ -109,12 +116,17 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
 # ═══════════════════════════════════════════════════════════════════════
 
 def on_message(data: P2ImMessageReceiveV1) -> None:
-    print(f"[MSG] received", flush=True)
     msg = data.event.message
+    if not message_targets_bot(msg.chat_type, msg.mentions, BOT_OPEN_ID):
+        return
+
+    print(f"[MSG] received", flush=True)
     chat_id, message_id = msg.chat_id, msg.message_id
     try: content = json.loads(msg.content)
     except Exception: return
-    text = content.get("text", "").strip()
+    text = strip_bot_mention(
+        content.get("text", ""), msg.mentions, BOT_OPEN_ID
+    )
     if not text: return
 
     # 提问人身份（三层权限按此解析）
