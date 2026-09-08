@@ -17,6 +17,7 @@ import lark_oapi as lark
 
 from .config import APP_ID, APP_SECRET
 from .feishu.client import build_client, send_message
+from .feishu.lark_profile import sync_lark_profile
 from .core.memory import memory
 from .core.scheduler import scheduler
 from .handlers import on_message, on_doc_comment
@@ -26,9 +27,15 @@ def main():
         print("[FATAL] 缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量，见 deploy/env.example", flush=True)
         sys.exit(1)
 
+    try:
+        sync_lark_profile(os.environ)
+    except Exception:
+        print("[FATAL] lark-cli 配置同步失败", flush=True)
+        sys.exit(1)
+    print("[LARK-CLI] 配置同步成功", flush=True)
+
     print("=" * 60, flush=True)
     print("飞书知识库助手 Bot 启动中...", flush=True)
-    print(f"App ID: {APP_ID}", flush=True)
     print(f"L6 自主行动: {'✅' if scheduler.config['enabled'] else '❌'}", flush=True)
     print(f"记忆条数: {len(memory.facts)}", flush=True)
     print("=" * 60, flush=True)
