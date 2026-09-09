@@ -24,8 +24,12 @@ python3 -m venv /srv/agent/venv
 # 见 https://code.claude.com/docs/en/setup —— 安装后确认 `claude --version` 可用
 # assistant.env 中可选配置 ANTHROPIC_API_KEY；不配置时由 Claude CLI 使用其原生认证配置
 
-# lark-cli + profile 登录（bot 身份）
-# 安装后：lark-cli auth login --profile assistant-bot  （按提示完成应用授权）
+# lark-cli（当前项目已验证版本）
+npm install -g @larksuite/cli@1.0.94
+lark-cli --version
+
+# bot profile 由助手启动时使用 FEISHU_APP_ID/SECRET 自动同步，无需网页登录。
+# 只有 user-only 操作会按需发出用户授权链接。
 
 # p4 CLI（dev 模式）
 # 安装 helix-cli，然后以 bot 的 P4 用户登录：
@@ -35,9 +39,11 @@ python3 -m venv /srv/agent/venv
 ## 3. lark-cli 官方 skills（可选增强）
 
 ```bash
-# 需要能访问 GitHub；不可达时跳过，各 profile 的 CLAUDE.md 已内置速查表
+# CLI 升级时同步更新 skills；需要能访问 GitHub。
 npx skills add larksuite/cli -g -a claude -s '*' -y
 ```
+
+更新 CLI 或 skills 后，重新启动运行助手的 Agent/服务，使新版命令说明生效。
 
 ## 4. dev 模式：profile 拷入工作区 + P4 protections
 

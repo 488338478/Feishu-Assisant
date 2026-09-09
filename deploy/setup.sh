@@ -42,8 +42,8 @@ cat <<'EOF'
 
 完成。后续步骤：
   1. 编辑 /srv/agent/assistant.env 填入 FEISHU_APP_ID/SECRET；ANTHROPIC_API_KEY 仅在需要显式使用 API Key 时填写
-  2. lark-cli --profile assistant-bot auth login（bot 凭证 + user 授权）
-  3. （可选）全局安装 lark 官方 skills：npx skills add larksuite/cli -g -a claude -s '*' -y
+  2. 安装已验证的 lark-cli：npm install -g @larksuite/cli@1.0.94（bot profile 启动时自动同步）
+  3. 同步官方 skills：npx skills add larksuite/cli -g -a claude -s '*' -y
   4. dev 模式：cp -r profiles/dev/. <P4工作区>/，填写 CLAUDE.md TODO，配置 p4 protect
   5. sudo systemctl enable --now assistant && journalctl -u assistant -f
   6. 群里发「推送到这里」「我的权限」验证；从 data/audit_log.jsonl 取 open_id 填 runtime_config.json

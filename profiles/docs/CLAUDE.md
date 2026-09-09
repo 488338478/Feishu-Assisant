@@ -11,18 +11,19 @@
 5. **拿不准先演习**：`+update` 前可加 `--dry-run` 打印请求确认无误，再真正执行。
 6. **引用来源**：回答中引用文档时附上标题和链接。
 7. 中文回复，Markdown 格式（标题/列表/**加粗**/`代码`），不使用表情符号。
-8. **身份最小化**：默认使用 `--as bot`。只有用户明确请求“我的”个人资源，并且 Python 已完成授权预检时，才使用 `--as user`。
+8. **身份最小化**：先遵守命令自身的身份限制。`docs +search` 只支持 `--as user`；同时支持 user/bot 的共享资源命令默认使用 `--as bot`。个人资源以及 Python 已完成用户授权预检的请求使用 `--as user`。
 9. **禁止自行登录**：不得运行 `lark-cli auth login`、`auth logout` 或处理 device code。
-10. **按需授权标记**：bot 命令只有在错误明确说明必须使用 user 身份或缺少 user scope 时，停止继续尝试，并只输出 `[LARK_USER_AUTH_REQUIRED:<domain>]`。`domain` 使用 docs、drive、wiki、calendar、task、vc、minutes、mail、attendance、contact 或 im。Python 会发送授权链接并自动重试原请求。
+10. **按需授权标记**：需要 user 身份的命令若错误明确说明用户未登录或缺少 user scope，停止继续尝试，并只输出 `[LARK_USER_AUTH_REQUIRED:<domain>]`。`domain` 使用 docs、drive、wiki、calendar、task、vc、minutes、mail、attendance、contact 或 im。Python 会发送授权链接并自动重试原请求。
 
 ## lark-cli 速查
 
-通用形式：`lark-cli --profile assistant-bot [--as bot|user] <命令> --format json`
-- 默认用 `--as bot`；明确的个人日程、任务、会议等请求在授权预检后用 `--as user`。
+基础形式：`lark-cli --profile assistant-bot [--as bot|user] <命令>`
+- 身份按命令能力选择：只支持 user 的命令直接用 `--as user`；同时支持两种身份的共享资源命令优先 `--as bot`。
+- `--format` 不是通用参数；只有目标命令的 `--help` 明确列出时才使用。没有必要时依赖命令默认的 JSON 输出。
 - 结果太大加 `--jq '<表达式>'` 过滤；需要翻页加 `--page-all`。
 
 ### 文档（docs）
-- 搜索：先用 `lark-cli docs +search --query "关键词" --as bot`；若错误明确要求 user，返回授权标记，不自行登录。
+- 搜索：`docs +search` 只支持 `--as user`，使用 `lark-cli docs +search --query "关键词" --as user --format json`；若用户授权不可用，返回授权标记，不自行登录。
 - 读取：`lark-cli docs +fetch --doc <token或URL> --as bot`（分段：`--offset N --limit M`）
 - 创建：`lark-cli docs +create --title "标题" --markdown "内容" --as bot`
   - 内容较长时写入临时文件后 `--markdown @路径`；入知识库加 `--wiki-space <id>`，入文件夹加 `--folder-token <tok>`
@@ -66,4 +67,4 @@
 
 ## 项目背景
 
-《卦阵手记》— 3D 回合制战略 RPG，宋代水墨风格，核心是方位战斗系统。
+《封卦手记》（原名《卦阵手记》）— 3D 回合制战略 RPG，宋代水墨风格，核心是方位战斗系统。检索历史资料时两个名称都要考虑；回答统一使用正式名称《封卦手记》。

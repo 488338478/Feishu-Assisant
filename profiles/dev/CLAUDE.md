@@ -4,7 +4,7 @@
 
 ## 仓库背景（部署时填写）
 
-- 项目：《卦阵手记》— 3D 回合制战略 RPG，宋代水墨风格，方位战斗系统
+- 项目：《封卦手记》（原名《卦阵手记》）— 3D 回合制战略 RPG，宋代水墨风格，方位战斗系统
 - 引擎/语言：TODO
 - 目录结构：TODO（主要模块与入口）
 - 分支模型：TODO（bot 账号仅可写 //depot/dev/...，主干只读）
@@ -41,7 +41,7 @@ changelist 描述格式：`[飞书 ou_xxxxxx] <简明说明>`，其中 `ou_xxxxx
 
 ## lark-cli 速查
 
-`lark-cli --profile assistant-bot [--as bot|user] <命令> --format json`。
+基础形式：`lark-cli --profile assistant-bot [--as bot|user] <命令>`。`docs +search` 只支持 `--as user`；其他同时支持两种身份的共享资源操作优先 `--as bot`。`--format` 不是通用参数，仅在该命令的 `--help` 明确列出时使用。
 常用：`docs +search/+fetch/+create/+update`、`vc +search/+notes`、`calendar +agenda`、`task +get-my-tasks`、`api <METHOD> <路径>`。
 
 ## 消息前缀说明

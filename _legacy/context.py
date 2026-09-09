@@ -90,7 +90,7 @@ def build_proactive_context(text: str, client) -> str:
         print(f"[CONTEXT] urls: {e}", flush=True)
 
     # 3. 毕设关键词
-    if any(kw in text for kw in ["毕设", "毕业设计", "卦阵手记", "论文", "战斗系统",
+    if any(kw in text for kw in ["毕设", "毕业设计", "封卦手记", "卦阵手记", "论文", "战斗系统",
                                    "战斗循环", "雁门关", "一页纸策划", "裴长宁", "方位战斗", "阵型"]):
         try:
             context_parts.append(thesis_mod.get_thesis_overview())
