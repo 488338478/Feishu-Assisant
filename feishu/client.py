@@ -23,7 +23,7 @@ def run_lark_cli(args: list, timeout: int = LARK_CLI_TIMEOUT, as_bot: bool = Tru
     cmd = ["lark-cli", "--profile", LARK_CLI_PROFILE]
     if as_bot:
         cmd += ["--as", "bot"]
-    cmd += args + ["--format", "json"]
+    cmd += args
 
     try:
         result = subprocess.run(
