@@ -11,6 +11,17 @@ from assistant.feishu.identity import required_user_domain
 
 
 class IdentityTests(unittest.TestCase):
+    def test_document_discovery_requires_user(self):
+        cases = [
+            "搜索项目周报",
+            "搜索知识库",
+            "找一下总策划文档并总结",
+            "查找 GDD",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(required_user_domain(text), "docs")
+
     def test_personal_resources_require_user(self):
         cases = {
             "看看我明天的日程": "calendar",
@@ -26,7 +37,7 @@ class IdentityTests(unittest.TestCase):
                 self.assertEqual(required_user_domain(text), domain)
 
     def test_shared_resources_stay_bot_first(self):
-        for text in ["读取项目周报", "搜索知识库", "列出群聊", "创建一篇文档"]:
+        for text in ["读取项目周报", "列出群聊", "创建一篇文档"]:
             with self.subTest(text=text):
                 self.assertIsNone(required_user_domain(text))
 

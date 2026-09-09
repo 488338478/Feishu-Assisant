@@ -29,15 +29,29 @@ class HandlerAuthTests(unittest.TestCase):
             item.start()
             self.addCleanup(item.stop)
 
-    def test_bot_first_message_does_not_preflight_auth(self):
+    def test_shared_document_read_does_not_preflight_auth(self):
         manager = MagicMock()
         with patch.object(handlers, "auth_manager", manager):
             result = handlers.process_message(
-                "搜索项目周报", "chat", "user", self.client
+                "读取项目周报", "chat", "user", self.client
             )
 
         self.assertEqual(result, "完成")
         manager.ensure_user.assert_not_called()
+
+    def test_document_search_authorizes_before_runtime(self):
+        manager = MagicMock()
+        manager.ensure_user.return_value = AuthResult(True)
+        with patch.object(handlers, "auth_manager", manager):
+            result = handlers.process_message(
+                "找一下总策划文档并总结", "chat", "user", self.client
+            )
+
+        self.assertEqual(result, "完成")
+        self.assertEqual(manager.ensure_user.call_args.args[0], "docs")
+        self.assertEqual(
+            handlers.runtime.run.call_args.kwargs["force_user_domain"], "docs"
+        )
 
     def test_personal_request_authorizes_before_runtime(self):
         manager = MagicMock()
@@ -50,6 +64,9 @@ class HandlerAuthTests(unittest.TestCase):
         self.assertEqual(result, "完成")
         manager.ensure_user.assert_called_once()
         handlers.runtime.run.assert_called_once()
+        self.assertEqual(
+            handlers.runtime.run.call_args.kwargs["force_user_domain"], "calendar"
+        )
 
     def test_auth_link_is_sent_to_triggering_chat(self):
         manager = MagicMock()
@@ -89,14 +106,14 @@ class HandlerAuthTests(unittest.TestCase):
         manager.ensure_user.return_value = AuthResult(True)
         with patch.object(handlers, "auth_manager", manager):
             result = handlers.process_message(
-                "搜索项目周报", "chat", "user", self.client
+                "读取项目周报", "chat", "user", self.client
             )
 
         self.assertEqual(result, "已找到文档")
         manager.ensure_user.assert_called_once()
         self.assertEqual(handlers.runtime.run.call_count, 2)
         retry_call = handlers.runtime.run.call_args_list[1]
-        self.assertEqual(retry_call.args[1], "搜索项目周报")
+        self.assertEqual(retry_call.args[1], "读取项目周报")
         self.assertEqual(retry_call.kwargs["force_user_domain"], "docs")
 
     def test_auth_marker_failure_does_not_retry_forever(self):
@@ -108,7 +125,7 @@ class HandlerAuthTests(unittest.TestCase):
         manager.ensure_user.return_value = AuthResult(False, "授权失败")
         with patch.object(handlers, "auth_manager", manager):
             result = handlers.process_message(
-                "搜索项目周报", "chat", "user", self.client
+                "读取项目周报", "chat", "user", self.client
             )
 
         self.assertEqual(result, "授权失败")
@@ -123,7 +140,7 @@ class HandlerAuthTests(unittest.TestCase):
         manager.ensure_user.return_value = AuthResult(True)
         with patch.object(handlers, "auth_manager", manager):
             result = handlers.process_message(
-                "搜索项目周报", "chat", "user", self.client
+                "读取项目周报", "chat", "user", self.client
             )
 
         self.assertNotIn("LARK_USER_AUTH_REQUIRED", result)

@@ -42,7 +42,7 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
     if any(kw in text for kw in ["我的权限", "查看权限"]):
         return runtime.describe_access(chat_id, sender_id)
 
-    # 个人资源才预检 user OAuth；共享资源保持 bot-first。
+    # 预检明确要求 user 的操作；支持 bot 的共享资源仍保持 bot-first。
     user_domain = required_user_domain(text)
     if user_domain:
         auth_result = auth_manager.ensure_user(
@@ -68,8 +68,13 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
             update_message(client, progress["mid"], body)
 
     # agent 处理
-    response, stats = runtime.run(chat_id, text, sender_id=sender_id,
-                                  progress_cb=progress_cb)
+    response, stats = runtime.run(
+        chat_id,
+        text,
+        sender_id=sender_id,
+        progress_cb=progress_cb,
+        force_user_domain=user_domain,
+    )
 
     # bot-first 调用若确认必须使用 user，由 Python 统一授权并只重试一次。
     fallback_domain = auth_required_domain(response)
