@@ -39,12 +39,25 @@ class HandlerAuthTests(unittest.TestCase):
         self.assertEqual(result, "完成")
         manager.ensure_user.assert_not_called()
 
-    def test_document_search_authorizes_before_runtime(self):
+    def test_shared_document_search_does_not_preflight_auth(self):
+        manager = MagicMock()
+        with patch.object(handlers, "auth_manager", manager):
+            result = handlers.process_message(
+                "找一下总策划文档并总结", "chat", "user", self.client
+            )
+
+        self.assertEqual(result, "完成")
+        manager.ensure_user.assert_not_called()
+        self.assertIsNone(
+            handlers.runtime.run.call_args.kwargs["force_user_domain"]
+        )
+
+    def test_personal_document_search_authorizes_before_runtime(self):
         manager = MagicMock()
         manager.ensure_user.return_value = AuthResult(True)
         with patch.object(handlers, "auth_manager", manager):
             result = handlers.process_message(
-                "找一下总策划文档并总结", "chat", "user", self.client
+                "找一下我创建的总策划文档并总结", "chat", "user", self.client
             )
 
         self.assertEqual(result, "完成")

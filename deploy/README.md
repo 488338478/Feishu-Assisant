@@ -39,11 +39,11 @@ lark-cli --version
 ## 3. lark-cli 官方 skills（可选增强）
 
 ```bash
-# CLI 升级时同步更新 skills；需要能访问 GitHub。
-npx skills add larksuite/cli -g -a claude -s '*' -y
+# 从飞书官方 well-known 入口同步 skills（无需 GitHub）。
+npx skills add https://open.feishu.cn -g -y
 ```
 
-更新 CLI 或 skills 后，重新启动运行助手的 Agent/服务，使新版命令说明生效。
+后续升级优先运行 `lark-cli update`，它会同步更新 CLI 和 AI skills。升级后重新启动运行助手的 Agent/服务，使新版命令说明生效。
 
 ## 4. dev 模式：profile 拷入工作区 + P4 protections
 

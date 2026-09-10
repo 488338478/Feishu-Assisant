@@ -41,8 +41,8 @@ changelist 描述格式：`[飞书 ou_xxxxxx] <简明说明>`，其中 `ou_xxxxx
 
 ## lark-cli 速查
 
-基础形式：`lark-cli --profile assistant-bot [--as bot|user] <命令>`。`docs +search` 只支持 `--as user`；其他同时支持两种身份的共享资源操作优先 `--as bot`。`--format` 不是通用参数，仅在该命令的 `--help` 明确列出时使用。
-常用：`docs +search/+fetch/+create/+update`、`vc +search/+notes`、`calendar +agenda`、`task +get-my-tasks`、`api <METHOD> <路径>`。
+基础形式：`lark-cli --profile assistant-bot [--as bot|user] <命令>`。共享资源搜索使用 `drive +search --as bot`；个人维度改用 user。旧入口 `docs +search` 只支持 user，不要传 bot。`--format` 不是通用参数，仅在该命令的 `--help` 明确列出时使用。
+文档正文使用 1.0.94 参数：fetch 为 `--doc --doc-format markdown`，create 为 `--doc-format markdown --content`，update 为 `--command ... --content`。常用：`drive +search`、`docs +fetch/+create/+update`、`calendar +agenda`、`task +get-my-tasks`、`api <METHOD> <路径>`。
 
 ## 消息前缀说明
 

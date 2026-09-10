@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProfilePolicyTests(unittest.TestCase):
-    def test_docs_profile_uses_user_for_search_and_denies_auth_commands(self):
+    def test_docs_profile_uses_bot_capable_search_and_denies_auth_commands(self):
         instructions = (ROOT / "profiles/docs/CLAUDE.md").read_text(encoding="utf-8")
         settings = json.loads(
             (ROOT / "profiles/docs/.claude/settings.json").read_text(encoding="utf-8")
@@ -15,6 +15,7 @@ class ProfilePolicyTests(unittest.TestCase):
 
         self.assertIn("`docs +search` 只支持 `--as user`", instructions)
         self.assertNotIn('docs +search --query "关键词" --as bot', instructions)
+        self.assertIn('drive +search --query "关键词" --as bot', instructions)
         self.assertIn("[LARK_USER_AUTH_REQUIRED:", instructions)
         denies = settings["permissions"]["deny"]
         self.assertIn("Bash(lark-cli auth login:*)", denies)
@@ -53,8 +54,22 @@ class ProfilePolicyTests(unittest.TestCase):
 
     def test_deployment_pins_validated_lark_cli_version(self):
         instructions = (ROOT / "deploy/README.md").read_text(encoding="utf-8")
+        architecture = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
         self.assertIn("@larksuite/cli@1.0.94", instructions)
+        self.assertIn("npx skills add https://open.feishu.cn -g -y", instructions)
+        self.assertNotIn("npx skills add larksuite/cli", instructions)
+        self.assertNotIn("npx skills add larksuite/cli", architecture)
+
+    def test_docs_profile_uses_lark_cli_1_0_94_document_flags(self):
+        instructions = (ROOT / "profiles/docs/CLAUDE.md").read_text(encoding="utf-8")
+
+        self.assertIn("--doc-format markdown", instructions)
+        self.assertIn("--content", instructions)
+        self.assertIn("--command", instructions)
+        self.assertNotIn("--markdown ", instructions)
+        self.assertNotIn("--mode ", instructions)
+        self.assertNotIn("--offset", instructions)
 
 
 if __name__ == "__main__":

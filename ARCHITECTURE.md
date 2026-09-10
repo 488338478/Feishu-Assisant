@@ -129,7 +129,7 @@ flowchart TD
 |---|---|
 | `CLAUDE.md` | system prompt：人设 + 行为规则 + lark-cli/p4 速查表 |
 | `.claude/settings.json` | 权限白/黑名单（该 profile 的天花板） |
-| `.claude/skills/` | 技能（dev 内置 p4v-workflow；官方 lark-cli skills 全局装，需 GitHub 可达） |
+| `.claude/skills/` | 技能（dev 内置 p4v-workflow；官方 lark-cli skills 从飞书 well-known 入口全局同步） |
 
 ## 文档评论流
 
@@ -148,7 +148,7 @@ flowchart TD
 |---|---|
 | per-user OAuth（"查我自己的任务/日程"） | lark-cli 单 profile 单身份，不支持 per-call token 注入。要实现需绕过 lark-cli 直调 OpenAPI（bot 私聊下发授权链接，user_access_token 存 data/user_tokens.json）。工作量集中在新封装层，runtime 无感知；收益限于 calendar/task/vc 三类查询，**暂缓，待真实需求** |
 | 个人级 P4 归因 | bot 单 P4 账号，服务端不区分操作者；归因靠 changelist 描述 `[飞书 ou_xxxxxxxx]` + audit_log。真·按人 ticket 暂缓 |
-| lark-cli 官方 skills | 安装需 GitHub 可达（`npx skills add larksuite/cli -g`）；不可达时各 profile 的 CLAUDE.md 内置速查表兜底 |
+| lark-cli 官方 skills | 使用 `npx skills add https://open.feishu.cn -g -y` 同步，无需 GitHub；后续升级优先运行 `lark-cli update` |
 | 多轮中的中间文本 | stream-json 只回报工具事件，agent 的中间思考文本不进进度消息（保持群内安静） |
 
 ## 数据文件（data/）

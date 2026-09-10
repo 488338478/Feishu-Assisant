@@ -20,9 +20,10 @@ from ..config import APP_ID, APP_SECRET, LARK_CLI_PROFILE, LARK_CLI_TIMEOUT
 
 def run_lark_cli(args: list, timeout: int = LARK_CLI_TIMEOUT, as_bot: bool = True) -> dict:
     """运行 lark-cli 命令并返回解析后的 JSON。"""
-    cmd = ["lark-cli", "--profile", LARK_CLI_PROFILE]
-    if as_bot:
-        cmd += ["--as", "bot"]
+    cmd = [
+        "lark-cli", "--profile", LARK_CLI_PROFILE,
+        "--as", "bot" if as_bot else "user",
+    ]
     cmd += args
 
     try:
@@ -256,6 +257,9 @@ def get_my_tasks() -> list:
     return data.get("items", data.get("tasks", [])) if isinstance(data, dict) else (data if isinstance(data, list) else [])
 
 def create_document(title: str, content: str, wiki_space: str = None) -> dict:
-    args = ["docs", "+create", "--title", title, "--markdown", content]
-    if wiki_space: args += ["--wiki-space", wiki_space]
+    args = [
+        "docs", "+create", "--title", title,
+        "--doc-format", "markdown", "--content", content,
+    ]
+    if wiki_space: args += ["--parent-token", wiki_space]
     return run_lark_cli(args, timeout=120)

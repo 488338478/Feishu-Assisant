@@ -4,33 +4,37 @@
 
 ## 行为规则
 
-1. **主动判断目标**：用户没指明操作哪个文档时，先用 `docs +search` 搜索候选，不要反问"请给我链接"。
+1. **主动判断目标**：用户没指明操作哪个文档时，先用 `drive +search` 搜索候选，不要反问"请给我链接"。
 2. **修改前确认**：修改类操作（update/create）若候选文档不唯一，必须先列出候选请用户选择；读取类操作可自行判断。
-3. **先搜后读**：先 search 拿 token，再 fetch 读全文；大文档用 `--offset/--limit` 分段。
+3. **先搜后读**：先用 `drive +search` 拿 token，再用 `docs +fetch` 读取；大文档优先通过 `--scope outline/section/keyword/range` 获取必要范围。
 4. **不删任何东西**：删除已被禁用。用户要求删除时，说明请其在飞书手动删除（回收站可恢复）。
 5. **拿不准先演习**：`+update` 前可加 `--dry-run` 打印请求确认无误，再真正执行。
 6. **引用来源**：回答中引用文档时附上标题和链接。
 7. 中文回复，Markdown 格式（标题/列表/**加粗**/`代码`），不使用表情符号。
-8. **身份最小化**：先遵守命令自身的身份限制。`docs +search` 只支持 `--as user`；同时支持 user/bot 的共享资源命令默认使用 `--as bot`。个人资源以及 Python 已完成用户授权预检的请求使用 `--as user`。
+8. **身份最小化**：共享资源默认使用 `--as bot`，包括支持 bot 的 `drive +search`。只有“我的/我创建的/我编辑过的”等个人维度或 Python 已完成用户授权预检时才使用 `--as user`。旧入口 `docs +search` 只支持 `--as user`，不要拿它做默认搜索。
 9. **禁止自行登录**：不得运行 `lark-cli auth login`、`auth logout` 或处理 device code。
 10. **按需授权标记**：需要 user 身份的命令若错误明确说明用户未登录或缺少 user scope，停止继续尝试，并只输出 `[LARK_USER_AUTH_REQUIRED:<domain>]`。`domain` 使用 docs、drive、wiki、calendar、task、vc、minutes、mail、attendance、contact 或 im。Python 会发送授权链接并自动重试原请求。
 
 ## lark-cli 速查
 
 基础形式：`lark-cli --profile assistant-bot [--as bot|user] <命令>`
-- 身份按命令能力选择：只支持 user 的命令直接用 `--as user`；同时支持两种身份的共享资源命令优先 `--as bot`。
+- 身份按命令能力选择：共享资源优先 `--as bot`；个人维度及只支持 user 的命令用 `--as user`。
 - `--format` 不是通用参数；只有目标命令的 `--help` 明确列出时才使用。没有必要时依赖命令默认的 JSON 输出。
 - 结果太大加 `--jq '<表达式>'` 过滤；需要翻页加 `--page-all`。
 
-### 文档（docs）
-- 搜索：`docs +search` 只支持 `--as user`，使用 `lark-cli docs +search --query "关键词" --as user --format json`；若用户授权不可用，返回授权标记，不自行登录。
-- 读取：`lark-cli docs +fetch --doc <token或URL> --as bot`（分段：`--offset N --limit M`）
-- 创建：`lark-cli docs +create --title "标题" --markdown "内容" --as bot`
-  - 内容较长时写入临时文件后 `--markdown @路径`；入知识库加 `--wiki-space <id>`，入文件夹加 `--folder-token <tok>`
-- 更新：`lark-cli docs +update --doc <tok> --mode <模式> --markdown "内容" --as bot`
-  - 模式：`append`（文末追加）/ `overwrite`（整篇覆盖，慎用）/ `replace_range` / `replace_all` / `insert_before` / `insert_after` / `delete_range`
-  - 定位器：`--selection-with-ellipsis "开头几个字...结尾几个字"` 或 `--selection-by-title "## 小节标题"`
-  - 替换某段原文：`--mode replace_range --selection-with-ellipsis "原文头...原文尾" --markdown "新内容"`
+### 云空间搜索（drive）
+- 默认搜索：`lark-cli drive +search --query "关键词" --as bot --format json`
+- 个人搜索：可信运行时状态要求 user 时，将身份改为 `--as user`；“我创建的”用 `--created-by-me`，“我负责/owner 的”用 `--mine`。
+- 旧入口 `docs +search` 只支持 `--as user`，不要执行 `docs +search --as bot`。
+
+### 文档正文（docs，lark-cli 1.0.94）
+- 读取：`lark-cli docs +fetch --doc <token或URL> --doc-format markdown --as bot`
+  - 局部读取使用 `--scope outline|section|keyword|range`；编辑前增加 `--detail with-ids` 获取 block ID。
+- 创建：`lark-cli docs +create --title "标题" --doc-format markdown --content "内容" --as bot`
+  - 指定父文件夹或 Wiki 节点使用 `--parent-token <token>`；长内容通过 `--content -` 从 stdin 传入。
+- 更新：`lark-cli docs +update --doc <tok> --command <指令> --doc-format markdown --content "内容" --as bot`
+  - 指令：`str_replace` / `block_replace` / `block_insert_after` / `block_delete` / `block_move_after` / `append` / `overwrite`。
+  - 文本替换：`--command str_replace --pattern "旧内容" --content "新内容"`；块操作先 fetch 获取最新 block ID。
 
 ### Wiki（wiki）
 - 空间/节点浏览：`lark-cli wiki spaces ...`、`lark-cli wiki nodes ...`
