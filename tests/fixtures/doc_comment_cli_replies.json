@@ -1,0 +1,54 @@
+{
+  "ok": true,
+  "identity": "bot",
+  "data": {
+    "comment_id": "c1",
+    "count": 2,
+    "file_token": "document-full-token",
+    "file_type": "docx",
+    "has_more": false,
+    "items": [
+      {
+        "content": {
+          "elements": [
+            {
+              "docs_link": null,
+              "person": null,
+              "text_run": {"text": "审视文章结构，给出修改建议"},
+              "type": "text_run"
+            },
+            {
+              "docs_link": null,
+              "person": {"user_id": "ou_bot"},
+              "text_run": null,
+              "type": "person"
+            }
+          ]
+        },
+        "create_time": 100,
+        "extra": {"image_list": []},
+        "reply_id": "r1",
+        "update_time": 100,
+        "user_id": "ou_user"
+      },
+      {
+        "content": {
+          "elements": [
+            {
+              "docs_link": null,
+              "person": null,
+              "text_run": {"text": "请补充具体文字指令，例如：帮我润色这段内容。"},
+              "type": "text_run"
+            }
+          ]
+        },
+        "create_time": 101,
+        "extra": {"image_list": null},
+        "reply_id": "b1",
+        "update_time": 101,
+        "user_id": "ou_bot"
+      }
+    ],
+    "page_token": "0"
+  }
+}

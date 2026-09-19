@@ -9,6 +9,19 @@ venv/
 
 # 运行时状态、用户标识、审计记录和会话信息
 data/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.jsonl
+
+# 密钥、证书和本地 CLI 认证状态
+*.pem
+*.key
+*.p12
+*.pfx
+.lark/
+.credentials/
 
 # 本地 IDE / OS 文件
 .idea/

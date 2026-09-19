@@ -1,7 +1,7 @@
 """飞书 SDK + lark-cli 封装 — harness 侧仅保留 IM 发送 / reaction / 评论回复 / scheduler 所需函数。
 
 文档/表格/会议等读写能力已全部移交 agent runtime（claude CLI + lark-cli skill），
-不再在 Python 侧包装。
+Python 侧仅额外保留评论事件的精确定位、状态预检与结果投递。
 """
 import json
 import re
@@ -13,6 +13,7 @@ from lark_oapi.core import AccessTokenType, BaseRequest, HttpMethod
 from lark_oapi.api.im.v1 import *
 
 from ..config import APP_ID, APP_SECRET, LARK_CLI_PROFILE, LARK_CLI_TIMEOUT
+from .lark_command import resolve_lark_cli
 
 # ═══════════════════════════════════════════════════════════════════════
 # lark-cli subprocess（scheduler 与评论回复使用）
@@ -21,7 +22,7 @@ from ..config import APP_ID, APP_SECRET, LARK_CLI_PROFILE, LARK_CLI_TIMEOUT
 def run_lark_cli(args: list, timeout: int = LARK_CLI_TIMEOUT, as_bot: bool = True) -> dict:
     """运行 lark-cli 命令并返回解析后的 JSON。"""
     cmd = [
-        "lark-cli", "--profile", LARK_CLI_PROFILE,
+        resolve_lark_cli(), "--profile", LARK_CLI_PROFILE,
         "--as", "bot" if as_bot else "user",
     ]
     cmd += args
@@ -33,13 +34,15 @@ def run_lark_cli(args: list, timeout: int = LARK_CLI_TIMEOUT, as_bot: bool = Tru
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
 
-        if result.returncode != 0 and not stdout:
+        if result.returncode != 0:
+            try:
+                failure = json.loads(stderr or stdout)
+                if isinstance(failure, dict) and failure.get("ok") is False:
+                    return failure
+            except json.JSONDecodeError:
+                pass
             return {"ok": False, "error": stderr[:500] or f"exit code {result.returncode}"}
 
-        for line in stdout.splitlines():
-            line = line.strip()
-            if line.startswith("{") or line.startswith("["):
-                return json.loads(line)
         return json.loads(stdout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"lark-cli 超时 ({timeout}s)"}
@@ -205,15 +208,56 @@ def update_message(client, message_id: str, text: str) -> bool:
 # 评论回复（agent 在评论流中的反馈通道）
 # ═══════════════════════════════════════════════════════════════════════
 
-def reply_to_comment(doc_token: str, comment_id: str, text: str) -> dict:
-    """回复文档评论（bot 身份）。SDK 未封装创建回复接口，走 lark-cli 通用 API。"""
-    body = {"content": {"elements": [{"type": "text_run", "text_run": {"content": text}}]}}
+def reply_to_comment(doc_token: str, comment_id: str, text: str, file_type: str = "docx") -> dict:
+    """以 bot 身份回复指定评论；全文及已解决评论由 CLI 再次预检。"""
     return run_lark_cli([
-        "api", "POST",
-        f"/open-apis/drive/v1/files/{doc_token}/comments/{comment_id}/replies",
-        "--params", json.dumps({"file_type": "docx"}),
-        "--data", json.dumps(body, ensure_ascii=False),
+        "drive", "+add-reply", "--token", doc_token, "--type", file_type,
+        "--comment-id", comment_id, "--content",
+        json.dumps([{"type": "text", "text": text}], ensure_ascii=False),
     ])
+
+
+def _comment_data(result: dict) -> dict:
+    if not isinstance(result, dict) or result.get("ok") is False:
+        raise RuntimeError(f"评论接口失败: {str(result.get('error') if isinstance(result, dict) else result)[:300]}")
+    data = result.get("data", result)
+    if not isinstance(data, dict):
+        raise RuntimeError("评论接口返回了非对象数据")
+    return data
+
+
+def read_comment_thread(doc_token: str, comment_id: str, file_type: str) -> dict:
+    """确定性读取评论状态和全部回复；不能拿任意最后一条充当本次事件。"""
+    base = ["--token", doc_token, "--type", file_type]
+    data = _comment_data(run_lark_cli([
+        "drive", "+batch-query-comments", *base, "--comment-ids", comment_id,
+    ]))
+    target = next((item for item in data.get("items", [])
+                   if isinstance(item, dict) and item.get("comment_id") == comment_id), None)
+    if target is None:
+        raise RuntimeError("未找到事件对应的评论")
+    # 无法回复的评论不再读取整条线程，更不启动推理。
+    if target.get("is_whole") is not False or target.get("is_solved") is not False:
+        return {**target, "replies": []}
+    replies, page_token, seen_pages, seen_replies = [], "", set(), set()
+    for _ in range(100):
+        argv = ["drive", "+list-replies", *base, "--comment-id", comment_id, "--page-size", "100"]
+        if page_token:
+            argv.extend(["--page-token", page_token])
+        page = _comment_data(run_lark_cli(argv))
+        for item in page.get("items", []):
+            if not isinstance(item, dict) or not item.get("reply_id"):
+                raise RuntimeError("回复列表结构不完整")
+            if item["reply_id"] not in seen_replies:
+                replies.append(item)
+                seen_replies.add(item["reply_id"])
+        if page.get("has_more") is False:
+            return {**target, "replies": replies}
+        page_token = page.get("page_token")
+        if not isinstance(page_token, str) or not page_token or page_token in seen_pages:
+            raise RuntimeError("回复分页信息不完整或循环")
+        seen_pages.add(page_token)
+    raise RuntimeError("评论超过分页上限，未执行指令")
 
 # ═══════════════════════════════════════════════════════════════════════
 # scheduler 专用的 lark-cli 函数

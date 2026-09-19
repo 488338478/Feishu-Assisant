@@ -18,13 +18,17 @@ def mention(open_id, key="@_user_1"):
     return SimpleNamespace(id=SimpleNamespace(open_id=open_id), key=key)
 
 
-def event(chat_type, mentions=None, text="你好"):
+def event(chat_type, mentions=None, text="你好", message_type="text", raw_content=None):
     message = SimpleNamespace(
         chat_type=chat_type,
         mentions=mentions,
         chat_id="chat",
         message_id="message",
-        content=json.dumps({"text": text}, ensure_ascii=False),
+        create_time="1757640720000",
+        parent_id="",
+        root_id="",
+        message_type=message_type,
+        content=raw_content if raw_content is not None else json.dumps({"text": text}, ensure_ascii=False),
     )
     sender = SimpleNamespace(sender_id=SimpleNamespace(open_id="sender"))
     return SimpleNamespace(event=SimpleNamespace(message=message, sender=sender))
@@ -59,14 +63,17 @@ class MessageGateTests(unittest.TestCase):
 
 
 class HandlerGateTests(unittest.TestCase):
-    def test_unmentioned_group_message_has_no_side_effects(self):
+    def test_unmentioned_group_message_is_captured_without_starting_ai(self):
         with (
             patch.object(handlers, "BOT_OPEN_ID", "bot-id"),
+            patch.object(handlers.group_history_store, "record") as record,
             patch.object(handlers, "build_client") as build_client,
             patch.object(handlers.threading, "Thread") as thread,
         ):
-            handlers.on_message(event("group", []))
+            handlers.on_message(event("group", [], "项目周五发布"))
 
+        record.assert_called_once()
+        self.assertEqual(record.call_args.args[0].content, "项目周五发布")
         build_client.assert_not_called()
         thread.assert_not_called()
 
@@ -91,6 +98,20 @@ class HandlerGateTests(unittest.TestCase):
             )
 
         thread.assert_called_once()
+
+    def test_non_text_group_message_preserves_raw_event_content(self):
+        raw = '{"title":"构建日志","elements":[{"tag":"text","text":"ERROR  raw"}]}'
+        with (
+            patch.object(handlers, "BOT_OPEN_ID", "bot-id"),
+            patch.object(handlers.group_history_store, "record") as record,
+            patch.object(handlers.threading, "Thread") as thread,
+        ):
+            handlers.on_message(event(
+                "group", [], message_type="post", raw_content=raw
+            ))
+
+        self.assertEqual(record.call_args.args[0].content, raw)
+        thread.assert_not_called()
 
 
 if __name__ == "__main__":

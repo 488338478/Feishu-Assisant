@@ -91,6 +91,17 @@ class LarkAuthManagerTests(unittest.TestCase):
         self.assertEqual(result.message, "飞书授权启动失败，请联系管理员检查应用凭证。")
         self.assertNotIn("private-value", result.message)
 
+    def test_force_reauthorization_surfaces_missing_calendar_scope(self):
+        runner = QueueRunner([
+            completed("missing calendar:calendar.event:read", returncode=1),
+        ])
+        result = LarkAuthManager(
+            "assistant-bot", runner=runner, executable="lark-cli"
+        ).ensure_user("calendar", lambda _: None, force=True)
+        self.assertFalse(result.ok)
+        self.assertIn("calendar:calendar.event:read", result.message)
+        self.assertEqual(len(runner.calls), 1)
+
     def test_concurrent_calls_share_one_device_flow(self):
         started = threading.Event()
         release = threading.Event()

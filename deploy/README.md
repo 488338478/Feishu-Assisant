@@ -1,4 +1,6 @@
-# 服务器部署指南（Phase 1/2）
+# 服务器部署指南
+
+当前标准服务器环境为 **Alibaba Cloud Linux 3 + systemd**。供服务器 AI 直接执行的完整流程见 [AI_DEPLOY_ALINUX3.md](AI_DEPLOY_ALINUX3.md)。Git 由管理员安装，仓库部署脚本不会管理 Git。
 
 目标：飞书助手运行在 P4V 代码仓库所在的 Linux 云服务器上，出站 WebSocket 连飞书，无需公网入站。
 
@@ -13,28 +15,16 @@
 └── depot/              # P4 工作区（dev 模式 cwd，可放在别处）
 ```
 
-## 2. 依赖安装
+## 2. 一键安装
 
 ```bash
-# Python 侧
-python3 -m venv /srv/agent/venv
-/srv/agent/venv/bin/pip install lark-oapi numpy
-
-# claude CLI（API 按量认证）
-# 见 https://code.claude.com/docs/en/setup —— 安装后确认 `claude --version` 可用
-# assistant.env 中可选配置 ANTHROPIC_API_KEY；不配置时由 Claude CLI 使用其原生认证配置
-
-# lark-cli（当前项目已验证版本）
-npm install -g @larksuite/cli@1.0.94
-lark-cli --version
-
-# bot profile 由助手启动时使用 FEISHU_APP_ID/SECRET 自动同步，无需网页登录。
-# 只有 user-only 操作会按需发出用户授权链接。
-
-# p4 CLI（dev 模式）
-# 安装 helix-cli，然后以 bot 的 P4 用户登录：
-#   p4 -p <P4PORT> -u assistant-bot login
+cd /srv/agent/assistant
+sudo bash deploy/install-alinux3.sh
+sudoedit /srv/agent/assistant.env
+sudo bash deploy/install-alinux3.sh --start
 ```
+
+脚本幂等执行，安装 Python/Node 依赖、固定版本 `@larksuite/cli@1.0.94`、`@anthropic-ai/claude-code@2.1.162`、systemd unit 和数据目录。两个 npm CLI 都安装在 `agent` 用户专用的 `/srv/agent/npm`，不会用 root npm 全局目录。dev 模式的 p4 CLI 仍由管理员单独安装和登录。
 
 ## 3. lark-cli 官方 skills（可选增强）
 
@@ -79,10 +69,9 @@ Protections:
 ## 6. 启动
 
 ```bash
-sudo cp assistant/deploy/assistant.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now assistant
-journalctl -u assistant -f   # 看日志
+sudo bash /srv/agent/assistant/deploy/install-alinux3.sh --start
+sudo bash /srv/agent/assistant/deploy/verify-alinux3.sh --live
+sudo journalctl -u assistant -f
 ```
 
 启动后在目标群发「推送到这里」设定每日摘要/提醒的目标群；发「我的权限」「查看配置」验证命令路径。

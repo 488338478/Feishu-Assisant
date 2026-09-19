@@ -16,6 +16,11 @@ class AuthResult:
 
 
 class LarkAuthManager:
+    REQUIRED_SCOPES = {"calendar": ("calendar:calendar.event:read",)}
+
+    @classmethod
+    def required_scopes(cls, domain: str) -> tuple[str, ...]:
+        return cls.REQUIRED_SCOPES.get(domain, ())
     def __init__(
         self,
         profile: str,
@@ -71,9 +76,9 @@ class LarkAuthManager:
             return False
         return self._json(result).get("identity") == "user"
 
-    def _authorize(self, domain: str, notify: Callable[[str], None]) -> AuthResult:
+    def _authorize(self, domain: str, notify: Callable[[str], None], force: bool = False) -> AuthResult:
         try:
-            if self._already_logged_in():
+            if not force and self._already_logged_in():
                 return AuthResult(True)
 
             started = self._run(
@@ -81,6 +86,8 @@ class LarkAuthManager:
             )
             if started.returncode:
                 combined = f"{started.stderr}\n{started.stdout}".lower()
+                if domain == "calendar" and "calendar.event:read" in combined:
+                    return AuthResult(False, "日历授权缺少权限 scope：calendar:calendar.event:read。请管理员在飞书开放平台为应用开通该权限后重新授权。")
                 if "secret" in combined and "invalid" in combined:
                     return AuthResult(False, "飞书授权启动失败，请联系管理员检查应用凭证。")
                 return AuthResult(False, "飞书授权启动失败，请稍后重试。")
@@ -110,7 +117,7 @@ class LarkAuthManager:
         except (OSError, subprocess.SubprocessError):
             return AuthResult(False, "无法运行 lark-cli，请联系管理员检查安装。")
 
-    def ensure_user(self, domain: str, notify: Callable[[str], None]) -> AuthResult:
+    def ensure_user(self, domain: str, notify: Callable[[str], None], force: bool = False) -> AuthResult:
         """Ensure a reusable user login, sharing one concurrent Device Flow."""
         with self._condition:
             observed_generation = self._generation
@@ -122,7 +129,7 @@ class LarkAuthManager:
 
         result = AuthResult(False, "飞书授权失败，请稍后重试。")
         try:
-            result = self._authorize(domain, notify)
+            result = self._authorize(domain, notify, force=force)
             return result
         finally:
             with self._condition:

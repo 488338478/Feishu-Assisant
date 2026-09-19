@@ -21,6 +21,8 @@ APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
 # CLI
 CLAUDE_EXE = os.environ.get("CLAUDE_EXE", "claude")
 LARK_CLI_PROFILE = os.environ.get("LARK_CLI_PROFILE", "assistant-bot")
+BOT_IDS = tuple(value.strip() for value in
+                os.environ.get("ASSISTANT_BOT_IDS", "").split(",") if value.strip())
 
 # 数据目录（默认包内 data/，首次运行自动创建）
 BASE_DIR = Path(os.environ.get("ASSISTANT_DATA_DIR", str(PACKAGE_DIR / "data")))
@@ -30,6 +32,8 @@ MEMORY_FILE = BASE_DIR / "memory_store.json"
 SCHEDULER_CONFIG_FILE = BASE_DIR / "scheduler_config.json"
 RUNTIME_CONFIG_FILE = BASE_DIR / "runtime_config.json"
 AUDIT_LOG_FILE = BASE_DIR / "audit_log.jsonl"
+GROUP_HISTORY_DB_FILE = BASE_DIR / "group_history.sqlite3"
+GROUP_HISTORY_CONFIG_FILE = BASE_DIR / "group_history_config.json"
 
 # Agent profile 目录与各 profile 工作目录
 PROFILES_DIR = Path(os.environ.get("ASSISTANT_PROFILES_DIR", str(PACKAGE_DIR / "profiles")))
@@ -37,6 +41,6 @@ P4_WORKSPACE = os.environ.get("P4_WORKSPACE", "")
 THESIS_DIR = os.environ.get("THESIS_DIR", "")
 
 # 超时与限制
-CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "300"))
+CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "1000"))
 LARK_CLI_TIMEOUT = 60
 MEMORY_MAX_FACTS = 500

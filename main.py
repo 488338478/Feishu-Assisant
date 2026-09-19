@@ -20,7 +20,7 @@ from .feishu.client import build_client, fetch_bot_open_id, send_message
 from .feishu.lark_profile import sync_lark_profile
 from .core.memory import memory
 from .core.scheduler import scheduler
-from .handlers import on_message, on_doc_comment, set_bot_open_id
+from .handlers import on_message, on_message_recalled, on_doc_comment, set_bot_open_id
 
 def main():
     if not APP_ID or not APP_SECRET:
@@ -58,6 +58,7 @@ def main():
 
     handler = lark.EventDispatcherHandler.builder("", "") \
         .register_p2_im_message_receive_v1(on_message) \
+        .register_p2_im_message_recalled_v1(on_message_recalled) \
         .register_p2_customized_event("drive.notice.comment_add_v1", on_doc_comment) \
         .register_p2_im_message_reaction_created_v1(lambda _: None) \
         .register_p2_im_message_reaction_deleted_v1(lambda _: None) \

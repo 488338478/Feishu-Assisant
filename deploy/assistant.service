@@ -9,13 +9,18 @@ User=agent
 Group=agent
 WorkingDirectory=/srv/agent
 EnvironmentFile=/srv/agent/assistant.env
+Environment=HOME=/srv/agent/home
+Environment=XDG_CONFIG_HOME=/srv/agent/home/.config
+Environment=PATH=/srv/agent/venv/bin:/srv/agent/npm/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/srv/agent/venv/bin/python -m assistant.main
 Restart=always
 RestartSec=5
+UMask=0077
 # 安全加固
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
+ReadWritePaths=/srv/agent/data /srv/agent/home
 PrivateTmp=true
 
 [Install]

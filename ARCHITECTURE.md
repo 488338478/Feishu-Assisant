@@ -133,7 +133,13 @@ flowchart TD
 
 ## 文档评论流
 
-评论事件 → 关键词门（@助手/修改/润色…）→ `runtime.run(profile=docs)`，prompt 携带 doc_token 与用户诉求 → agent 用 lark-cli 自读文档并自行完成追加/替换 → 最终文本经 `reply_to_comment` 回贴评论线程。
+`drive.notice.comment_add_v1` → 解析 `event.notice_meta` 和 `header.event_id` → bot 身份、收件人和事件类型筛选 → 后台线程。Python 用 `+batch-query-comments` 校验状态、分页 `+list-replies` 精确找到触发的 reply_id，再决定是否启动 `runtime.run(profile=docs)`。
+
+首次只认真实 @；后续无 @的 add_reply 必须紧接当前机器人的回复，且没有明确 @其他人。官方结构没有父 reply_id，因此此规则按有序评论线程判断，不推断任意 UI 回复关系。作者必须匹配通知里的 open_id，机器人自己的通知直接忽略。
+
+会话标识是完整文档类型、token 和 comment_id；同一线程续接 Claude 会话，不同线程隔离。整个读取、推理和回复过程按文档加锁，避免两个评论线程同时改同一文档。prompt 带引用、触发回复之前最近 20 条评论及本轮指令；agent 修改前读取最新正文，最终结果统一由 Python `+add-reply` 投递。
+
+`data/doc_comments.sqlite3` 保存业务去重和待投递结果，已结束记录保留 7 天。读取和投递失败在后台最多尝试 3 次；重投只补发已保存结果，投递超时先核对已有机器人回复。推理中进程退出会保留 running（结果不确定），不自动重复写操作。超过重试次数的结果保留，后续同事件重投可继续投递；当前没有后台永久补偿队列。全文、已解决或状态未知的评论在推理前跳过。评论路径仅用 bot 身份，不走聊天 OAuth。
 
 ## 调度器（L6，保留）
 

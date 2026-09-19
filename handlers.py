@@ -10,16 +10,47 @@ from .feishu.client import (
     send_progress_message, update_message,
 )
 from .agent import runtime
-from .config import LARK_CLI_PROFILE
+from .config import LARK_CLI_PROFILE, BOT_IDS
+from .feishu.comment_service import dispatch_doc_comment
 from .core.memory import memory
+from .core.group_history import (
+    GroupMessage,
+    HistoryQuery,
+    MessageNotFound,
+    group_history_config,
+    group_history_service,
+    group_history_store,
+)
 from .core.scheduler import scheduler, PUSH_TARGET_MARKER
 from .feishu.auth import LarkAuthManager
 from .feishu.identity import auth_required_domain, required_user_domain
 from .feishu.message_gate import message_targets_bot, strip_bot_mention
+from .feishu.group_history_protocol import parse_history_request
 
 
 auth_manager = LarkAuthManager(LARK_CLI_PROFILE)
 BOT_OPEN_ID = ""
+
+_SESSION_CONTROL_COMMANDS = {"清除上下文", "清除会话", "重置会话", "新建会话", "切换会话"}
+_SESSION_CONTROL_INTENTS = (
+    "清除上下文", "清空上下文", "清除会话", "重置会话", "重新开始",
+    "新建会话", "切换会话", "换个话题", "忘掉前面", "忘记前面",
+    "不要记得", "别记得",
+)
+
+
+def _session_control_guidance(text: str) -> str | None:
+    normalized = "".join(text.lower().split())
+    mentions_context_reset = (
+        any(word in normalized for word in ("上下文", "会话", "前面", "之前"))
+        and any(word in normalized for word in ("清除", "清空", "重置", "忘掉", "忘记", "重新"))
+    )
+    if mentions_context_reset or any(intent in normalized for intent in _SESSION_CONTROL_INTENTS):
+        return (
+            "如果你希望从空白上下文重新开始，请单独发送「清除上下文」或「新建会话」。"
+            "群聊中执行后会清除该群共享的上下文；私聊只清除当前私聊。"
+        )
+    return None
 
 
 def set_bot_open_id(open_id: str) -> None:
@@ -30,7 +61,17 @@ def set_bot_open_id(open_id: str) -> None:
 # 消息处理
 # ═══════════════════════════════════════════════════════════════════════
 
-def process_message(text: str, chat_id: str, sender_id: str, client, message_id: str = "") -> str:
+def process_message(
+    text: str, chat_id: str, sender_id: str, client,
+    message_id: str = "", chat_type: str = "p2p",
+    reply_to: str = "", thread_id: str = "",
+) -> str:
+    if text.strip().lower() in _SESSION_CONTROL_COMMANDS:
+        runtime.clear_session(chat_id, sender_id, chat_type)
+        return "已清除当前会话上下文和关联记忆。"
+    session_guidance = _session_control_guidance(text)
+    if session_guidance:
+        return session_guidance
     # 调度配置命令：确定性指令，直接处理，不走 agent
     cfg_result = scheduler.configure(text)
     if cfg_result:
@@ -44,6 +85,7 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
 
     # 预检明确要求 user 的操作；支持 bot 的共享资源仍保持 bot-first。
     user_domain = required_user_domain(text)
+    runtime_user_domain = user_domain
     if user_domain:
         auth_result = auth_manager.ensure_user(
             user_domain,
@@ -74,6 +116,9 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
         sender_id=sender_id,
         progress_cb=progress_cb,
         force_user_domain=user_domain,
+        chat_type=chat_type,
+        group_reply_to=reply_to,
+        group_thread_id=thread_id,
     )
 
     # bot-first 调用若确认必须使用 user，由 Python 统一授权并只重试一次。
@@ -82,6 +127,7 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
         auth_result = auth_manager.ensure_user(
             fallback_domain,
             lambda message: send_message(client, chat_id, message),
+            force=True,
         )
         if not auth_result.ok:
             return auth_result.message
@@ -91,6 +137,9 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
             sender_id=sender_id,
             progress_cb=progress_cb,
             force_user_domain=fallback_domain,
+            chat_type=chat_type,
+            group_reply_to=reply_to,
+            group_thread_id=thread_id,
         )
         if auth_required_domain(retry_response):
             response = (
@@ -99,18 +148,111 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
             )
         else:
             response = retry_response
+            runtime_user_domain = fallback_domain
         stats = {
             **retry_stats,
             "tools": stats.get("tools", 0) + retry_stats.get("tools", 0),
             "duration": stats.get("duration", 0) + retry_stats.get("duration", 0),
         }
+
+    history_request = parse_history_request(response)
+    if history_request:
+        if chat_type != "group":
+            response = "当前请求不能读取群聊记录，请在对应群聊中重新提问。"
+        else:
+            max_rounds = group_history_config.load().max_search_rounds
+            rounds = 0
+            while history_request and rounds < max_rounds:
+                rounds += 1
+                try:
+                    if history_request.kind == "search":
+                        history_result = group_history_service.search(
+                            chat_id,
+                            HistoryQuery(
+                                query=history_request.query,
+                                time_range_hours=history_request.time_range_hours,
+                                sender_ids=history_request.sender_ids,
+                                thread_id=history_request.thread_id or thread_id or reply_to,
+                                limit=history_request.limit,
+                                exclude_message_ids=(message_id,) if message_id else (),
+                            ),
+                        )
+                    else:
+                        history_result = group_history_service.expand(
+                            chat_id, history_request.message_id, history_request.part
+                        )
+                    history_context = history_result.text
+                    runtime.audit_event({
+                        "event": (
+                            "group_history_search"
+                            if history_request.kind == "search"
+                            else "group_history_expand"
+                        ),
+                        "chat_id": chat_id,
+                        "sender": sender_id,
+                        "query": history_request.query[:200],
+                        "message_ids": list(history_result.message_ids),
+                        "estimated_tokens": history_result.estimated_tokens,
+                        "truncated": history_result.truncated,
+                        "round": rounds,
+                        "policy": "current_group_only",
+                    })
+                except MessageNotFound:
+                    history_context = "[检索结果] 请求的消息在当前群中不可用。"
+                    runtime.audit_event({
+                        "event": "group_history_denied",
+                        "chat_id": chat_id,
+                        "sender": sender_id,
+                        "round": rounds,
+                        "policy": "current_group_only",
+                    })
+                retry_response, retry_stats = runtime.run(
+                    chat_id,
+                    text,
+                    sender_id=sender_id,
+                    progress_cb=progress_cb,
+                    force_user_domain=runtime_user_domain,
+                    chat_type=chat_type,
+                    group_history_context=history_context,
+                    group_reply_to=reply_to,
+                    group_thread_id=thread_id,
+                )
+                stats = {
+                    **retry_stats,
+                    "tools": stats.get("tools", 0) + retry_stats.get("tools", 0),
+                    "duration": stats.get("duration", 0) + retry_stats.get("duration", 0),
+                }
+                response = retry_response
+                history_request = parse_history_request(response)
+            if history_request:
+                final_response, final_stats = runtime.run(
+                    chat_id,
+                    text,
+                    sender_id=sender_id,
+                    progress_cb=progress_cb,
+                    force_user_domain=runtime_user_domain,
+                    chat_type=chat_type,
+                    group_history_context=history_context,
+                    group_reply_to=reply_to,
+                    group_thread_id=thread_id,
+                    group_history_exhausted=True,
+                )
+                stats = {
+                    **final_stats,
+                    "tools": stats.get("tools", 0) + final_stats.get("tools", 0),
+                    "duration": stats.get("duration", 0) + final_stats.get("duration", 0),
+                }
+                response = final_response
+                if parse_history_request(response):
+                    response = "已达到本次回答的群聊记录检索上限，请缩小时间范围后重试。"
     if progress["mid"]:
         update_message(client, progress["mid"],
                        f"✅ 完成：工具调用 {stats['tools']} 次，耗时 {stats['duration']:.0f}s")
 
     # 自动学习（从对话提取项目事实入库）
     try:
-        memory.auto_learn(text, response)
+        memory.auto_learn(text, response,
+                          scope=runtime.session_key(chat_id, sender_id, chat_type))
     except Exception:
         pass
 
@@ -122,27 +264,61 @@ def process_message(text: str, chat_id: str, sender_id: str, client, message_id:
 
 def on_message(data: P2ImMessageReceiveV1) -> None:
     msg = data.event.message
-    if not message_targets_bot(msg.chat_type, msg.mentions, BOT_OPEN_ID):
-        return
-
-    print(f"[MSG] received", flush=True)
     chat_id, message_id = msg.chat_id, msg.message_id
     try: content = json.loads(msg.content)
     except Exception: return
-    text = strip_bot_mention(
-        content.get("text", ""), msg.mentions, BOT_OPEN_ID
-    )
-    if not text: return
+    raw_text = content.get("text", "")
+    if not isinstance(raw_text, str):
+        raw_text = ""
+    content_type = getattr(msg, "message_type", "text") or "text"
+    captured_content = raw_text if content_type == "text" else msg.content
 
     # 提问人身份（三层权限按此解析）
     try: sender_id = data.event.sender.sender_id.open_id or ""
     except Exception: sender_id = ""
 
+    if msg.chat_type == "group" and captured_content and chat_id and message_id:
+        try:
+            event_sender_name = getattr(data.event.sender, "name", "") or ""
+            sender_name = (
+                event_sender_name
+                or group_history_config.load().sender_names.get(sender_id, "")
+                or sender_id
+                or "未知成员"
+            )
+            group_history_store.record(GroupMessage(
+                message_id=message_id,
+                chat_id=chat_id,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                sent_at_ms=int(getattr(msg, "create_time", 0) or time.time() * 1000),
+                reply_to=getattr(msg, "parent_id", "") or "",
+                thread_id=getattr(msg, "root_id", "") or "",
+                content_type=content_type,
+                content=captured_content,
+            ))
+        except Exception as error:
+            print(f"[GROUP_HISTORY] capture error: {error}", flush=True)
+
+    if not message_targets_bot(msg.chat_type, msg.mentions, BOT_OPEN_ID):
+        return
+
+    if not raw_text:
+        return
+
+    print(f"[MSG] received", flush=True)
+    text = strip_bot_mention(raw_text, msg.mentions, BOT_OPEN_ID)
+    if not text: return
+
     client = build_client()
     def run():
         rid = add_reaction(client, message_id, "THINKING")
         try:
-            result = process_message(text, chat_id, sender_id, client, message_id)
+            result = process_message(
+                text, chat_id, sender_id, client, message_id, msg.chat_type,
+                getattr(msg, "parent_id", "") or "",
+                getattr(msg, "root_id", "") or "",
+            )
             delete_reaction(client, message_id, rid)
             send_message(client, chat_id, result)
         except Exception as e:
@@ -152,38 +328,26 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 def on_doc_comment(event) -> None:
-    print(f"[DOC] {json.dumps(event.event, ensure_ascii=False, default=str)[:500]}", flush=True)
+    """SDK 回调只做候选筛选；读评论、推理和投递均在后台执行。"""
     try:
-        ev = event.event
-        comment = ev.get("comment", {})
-        comment_id = comment.get("comment_id", "")
-        ct = ""
-        for item in comment.get("content", []):
-            if isinstance(item, dict):
-                for elem in item.get("elements", []):
-                    if elem.get("type") == "text_run":
-                        ct += elem.get("text_run", {}).get("content", "")
-        if not ct: return
-
-        is_mentioned = any(kw in ct.lower() for kw in
-            ["@bot", "@助手", "@assistant", "@知识库助手", "修改", "编辑", "更新", "帮我看", "帮我查", "优化", "润色"])
-        if not is_mentioned: return
-
-        doc_token = ev.get("object", {}).get("obj_token", ev.get("object", {}).get("owner_id", ""))
-        if not doc_token: return
-
-        # 交给 agent（docs profile）：自读文档、自行完成修改，最终文本回贴评论
-        prompt = (
-            f"飞书用户在文档（token={doc_token}）的评论中提出请求：「{ct}」。\n"
-            f"请用 lark-cli 读取该文档，判断意图并完成相应处理（追加/替换/润色/回答问题）。\n"
-            f"你的最终回复将作为评论回复发给用户：改动了就简要说明做了什么；"
-            f"只是建议或未改动文档，直接给出建议内容。"
-        )
-        response, _ = runtime.run("doc_" + doc_token[:8], prompt, sender_id="", profile="docs")
-
-        if comment_id:
-            res = reply_to_comment(doc_token, comment_id, response[:2000])
-            if res.get("ok") is False:
-                print(f"[DOC] comment reply failed: {res.get('error')}", flush=True)
+        # BOT_OPEN_ID 未解析成功时，额外 ID 不能代替启动身份验证。
+        if not BOT_OPEN_ID:
+            return
+        header = getattr(event, "header", None)
+        dispatch_doc_comment(getattr(event, "event", None),
+                             getattr(header, "event_id", "") or "",
+                             (BOT_OPEN_ID, *BOT_IDS))
     except Exception as e:
         print(f"[DOC] error: {e}", flush=True)
+
+
+def on_message_recalled(data) -> None:
+    """Remove recalled messages from the current-group history store."""
+    try:
+        event = data.event
+        chat_id = getattr(event, "chat_id", "") or ""
+        message_id = getattr(event, "message_id", "") or ""
+        if chat_id and message_id:
+            group_history_store.remove(chat_id, message_id)
+    except Exception as error:
+        print(f"[GROUP_HISTORY] recall error: {error}", flush=True)
