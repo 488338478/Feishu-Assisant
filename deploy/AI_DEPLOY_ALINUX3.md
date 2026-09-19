@@ -45,6 +45,48 @@ cd /srv/agent/assistant
 sudo bash deploy/install-alinux3.sh --start
 ```
 
+## 启用代码仓库 / P4 模式
+
+需要让某个飞书群读取 Perforce 工作区时，不能只完成基础部署。先确认服务器上已经有
+可用的 P4 client workspace 和 `p4` 命令，再在 `/srv/agent/assistant.env` 设置：
+
+```dotenv
+P4_WORKSPACE=/实际的/client/root
+P4PORT=ssl:实际P4地址:1666
+P4USER=实际服务账号
+P4CLIENT=实际client名
+# P4TICKETS=/srv/agent/home/.p4tickets
+# P4CONFIG=.p4config
+```
+
+不要把真实值提交回 Git。systemd 不继承管理员 shell 的 P4 环境；P4 ticket 和工作区
+必须能被 `agent` 用户读取。把 dev profile 安装到实际工作区并填写项目说明：
+
+```bash
+sudo cp -a /srv/agent/assistant/profiles/dev/. /实际的/client/root/
+sudo chown -R agent:agent /实际的/client/root/.claude /实际的/client/root/CLAUDE.md
+sudoedit /实际的/client/root/CLAUDE.md
+```
+
+从 `/srv/agent/data/audit_log.jsonl` 最近一条目标群记录取得 `chat_id`，然后编辑
+`/srv/agent/data/runtime_config.json`，保留已有配置并在 `chat_profiles` 中加入：
+
+```json
+"oc_目标群chat_id": "dev"
+```
+
+`runtime_config.json` 每次请求都会重读；修改群映射不用重启。环境变量修改后执行：
+
+```bash
+sudo systemctl restart assistant.service
+sudo systemctl status assistant.service --no-pager
+```
+
+在目标群依次发送“我的权限”和“进入 P4V 看看仓库有什么”。第一条应显示
+`profile=dev`，第二条应读取 P4 工作区或执行只读 `p4` 命令，不应调用飞书 wiki/drive
+搜索。这里的“进入 P4V”指通过 P4 CLI 和 client workspace 操作仓库，不是远程控制
+P4V 图形界面。
+
 ## 飞书控制台前置条件
 
 应用需要机器人能力、长连接事件接收和正确可用范围。至少订阅：

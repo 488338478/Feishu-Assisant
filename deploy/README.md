@@ -51,6 +51,21 @@ Protections:
 	write user assistant-bot * //depot/dev/...
 ```
 
+同时在 `/srv/agent/assistant.env` 至少设置 `P4_WORKSPACE`，并按实际环境设置
+`P4PORT`、`P4USER`、`P4CLIENT`。systemd 不会继承管理员登录 shell 里的这些变量；
+ticket 必须由运行服务的 `agent` 用户读取。配置后验证：
+
+```bash
+sudo -u agent env HOME=/srv/agent/home \
+  P4PORT="实际地址" P4USER="实际用户" P4CLIENT="实际客户端" \
+  p4 -d /srv/depot info
+sudo -u agent env HOME=/srv/agent/home \
+  P4PORT="实际地址" P4USER="实际用户" P4CLIENT="实际客户端" \
+  p4 -d /srv/depot opened
+```
+
+助手通过 P4 CLI 和工作区文件读取仓库，并不远程操作 P4V 图形界面。
+
 ## 5. 配置人员与群权限
 
 `data/runtime_config.json`（首次运行自动生成，改了即时生效）：

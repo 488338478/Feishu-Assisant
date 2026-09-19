@@ -1,5 +1,6 @@
 """事件处理器 — IM 消息 + 文档评论。推理全部走 agent.runtime（claude CLI）。"""
 import json
+import re
 import threading
 import time
 
@@ -37,6 +38,42 @@ _SESSION_CONTROL_INTENTS = (
     "新建会话", "切换会话", "换个话题", "忘掉前面", "忘记前面",
     "不要记得", "别记得",
 )
+
+_P4_ACTION_WORDS = (
+    "进入", "打开", "看看", "查看", "读取", "检索", "搜索", "检查", "分析",
+    "列出", "有哪些", "有啥", "状态", "提交", "变更", "文件", "代码", "仓库",
+    "工作区", "changelist",
+)
+_P4_DOC_WORDS = ("飞书", "知识库", "文档", "说明", "教程", "操作手册")
+_P4_REPOSITORY_WORDS = ("仓库", "工作区", "代码", "changelist", "提交", "变更", "状态")
+
+
+def _requires_dev_profile(text: str) -> bool:
+    """识别明确的 P4 工作区操作；飞书中的 P4 文档查询仍交给 docs。"""
+    lowered = text.lower()
+    compact = "".join(lowered.split())
+    has_p4 = bool(re.search(r"p4v|perforce|(?<![a-z0-9])p4(?![a-z0-9])", lowered))
+    has_repository_request = any(
+        phrase in compact for phrase in ("仓库代码", "代码仓库", "p4工作区", "perforce工作区")
+    )
+    if not has_p4 and not has_repository_request:
+        return False
+    explicit_doc_request = any(word in compact for word in _P4_DOC_WORDS)
+    explicit_repository_request = any(word in compact for word in _P4_REPOSITORY_WORDS)
+    if explicit_doc_request and not explicit_repository_request:
+        return False
+    return has_repository_request or any(word in compact for word in _P4_ACTION_WORDS)
+
+
+def _dev_profile_guidance(chat_id: str) -> str:
+    return (
+        "当前会话未配置为研发模式，无法读取 P4 工作区；本次不会改为搜索飞书。\n"
+        "请管理员完成两项配置：\n"
+        "1. 在 `/srv/agent/assistant.env` 设置 `P4_WORKSPACE` 为服务器上的 P4 client root；\n"
+        "2. 在 `/srv/agent/data/runtime_config.json` 的 `chat_profiles` 中添加 "
+        f"`\"{chat_id}\": \"dev\"`。\n"
+        "环境变量变更后重启 `assistant.service`；群配置即时生效。配置完成后发送「我的权限」确认。"
+    )
 
 
 def _session_control_guidance(text: str) -> str | None:
@@ -82,6 +119,11 @@ def process_message(
     # 权限查询命令
     if any(kw in text for kw in ["我的权限", "查看权限"]):
         return runtime.describe_access(chat_id, sender_id)
+
+    # P4 工作区是 dev profile 的能力边界。未配置时直接说明，避免模型把 P4V
+    # 误判成飞书资料名并调用 wiki/drive/docs 搜索。
+    if _requires_dev_profile(text) and runtime.resolve_profile(chat_id) != "dev":
+        return _dev_profile_guidance(chat_id)
 
     # 预检明确要求 user 的操作；支持 bot 的共享资源仍保持 bot-first。
     user_domain = required_user_domain(text)

@@ -330,7 +330,14 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     tier = resolve_tier(sender_id)
     cwd = _profile_cwd(profile)
     if cwd is None or not cwd.exists():
-        return (f"当前群模式（{profile}）未配置或工作目录不存在，请联系管理员。"), \
+        unavailable = (
+            "当前会话已设为 dev，但 P4 工作区不可用。请管理员在 "
+            "`/srv/agent/assistant.env` 设置正确的 `P4_WORKSPACE`，确认目录存在且 "
+            "assistant 服务用户可读取，然后重启 `assistant.service`。"
+            if profile == "dev" else
+            f"当前群模式（{profile}）未配置或工作目录不存在，请联系管理员。"
+        )
+        return unavailable, \
                {"ok": False, "tools": 0, "duration": 0.0, "err": "profile_unavailable"}
 
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
