@@ -4,12 +4,12 @@
 
 ## 从零开始时给服务器 AI 的信息
 
-服务器在 clone 之前看不到本文件，因此首次指令必须直接提供仓库地址。把真实地址替换进下面的 `REPO_URL`，私有仓库应使用服务器部署密钥或凭证助手，不要把 token 写进 URL 或聊天：
+服务器在 clone 之前看不到本文件，因此首次指令直接包含仓库地址。私有仓库应使用服务器部署密钥或凭证助手，不要把 token 写进 URL 或聊天：
 
 ```text
 Git 已安装。请在 Alibaba Cloud Linux 3 上部署飞书助手。
-仓库地址：<REPO_URL>
-分支或 tag：<DEPLOY_REF，默认 master>
+仓库地址：https://github.com/488338478/Feishu-Assisant.git
+分支：master
 
 先将仓库 clone 到 /srv/agent/assistant，再完整阅读仓库根目录的 SERVER_DEPLOY.md 和 deploy/AI_DEPLOY_ALINUX3.md，然后严格按“首次部署”执行。任何命令非零退出时停止，不要删除既有目录，不要输出密钥。完成后按文档的 AI 交付格式汇报。
 ```
@@ -17,8 +17,8 @@ Git 已安装。请在 Alibaba Cloud Linux 3 上部署飞书助手。
 服务器 AI 应先执行以下等价步骤：
 
 ```bash
-export REPO_URL='<REPO_URL>'
-export DEPLOY_REF='<DEPLOY_REF>'
+export REPO_URL='https://github.com/488338478/Feishu-Assisant.git'
+export DEPLOY_REF='master'
 test -n "$REPO_URL"
 test -n "$DEPLOY_REF"
 command -v git

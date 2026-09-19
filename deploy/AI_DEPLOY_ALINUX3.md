@@ -14,13 +14,13 @@
 
 ## 首次部署
 
-管理员先安装 Git，并向服务器 AI 提供真实 `REPO_URL` 和 `DEPLOY_REF`。首次 clone 的完整提示词见仓库根目录 `SERVER_DEPLOY.md`。等价命令如下：
+管理员先安装 Git。当前部署仓库和分支已经固定；首次 clone 的完整提示词见仓库根目录 `SERVER_DEPLOY.md`。等价命令如下：
 
 ```bash
 sudo mkdir -p /srv/agent
 sudo chown "$USER":"$USER" /srv/agent
-export REPO_URL='<REPO_URL>'
-export DEPLOY_REF='<DEPLOY_REF>'
+export REPO_URL='https://github.com/488338478/Feishu-Assisant.git'
+export DEPLOY_REF='master'
 git clone --branch "$DEPLOY_REF" --single-branch "$REPO_URL" /srv/agent/assistant
 cd /srv/agent/assistant
 git rev-parse HEAD
