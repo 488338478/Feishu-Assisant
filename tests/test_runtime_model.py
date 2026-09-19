@@ -34,3 +34,14 @@ class FixedModelTests(unittest.TestCase):
                     self.assertEqual(child_env[key], 'deepseek-v4-flash')
                 if session:
                     self.assertEqual(cmd[cmd.index('--resume') + 1], session)
+
+    def test_selected_model_applies_to_new_and_subtask_environment(self):
+        proc = Mock(returncode=0)
+        proc.stdout = io.StringIO(json.dumps({'type': 'result', 'result': 'ok', 'session_id': 's'}) + '\n')
+        proc.stderr = io.StringIO('')
+        with patch.object(runtime.subprocess, 'Popen', return_value=proc) as popen:
+            runtime._run_claude('hi', None, Path.cwd(), [], 5, model='deepseek-v4-pro')
+
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[cmd.index('--model') + 1], 'deepseek-v4-pro')
+        self.assertEqual(popen.call_args.kwargs['env']['ANTHROPIC_MODEL'], 'deepseek-v4-pro')

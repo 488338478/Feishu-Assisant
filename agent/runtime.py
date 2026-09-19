@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..config import (
     CLAUDE_EXE, CLAUDE_TIMEOUT, SESSIONS_FILE, RUNTIME_CONFIG_FILE,
-    AUDIT_LOG_FILE, PROFILES_DIR, P4_WORKSPACE, THESIS_DIR,
+    MODEL_PREFERENCES_FILE, AUDIT_LOG_FILE, PROFILES_DIR, P4_WORKSPACE, THESIS_DIR,
 )
 from ..core.memory import memory
 
@@ -35,7 +35,12 @@ def _profile_cwd(profile: str) -> Path | None:
     return None
 
 PROFILE_TIMEOUT = {"dev": 900}  # 开发任务耗时长；其余用 CLAUDE_TIMEOUT
-FIXED_MODEL = "deepseek-v4-flash"  # 用户指定预算策略：所有 profile 与续会话固定 Flash。
+DEFAULT_MODEL = "deepseek-v4-flash"
+FIXED_MODEL = DEFAULT_MODEL  # 兼容旧调用方；未切换时使用 4.1 Flash。
+MODEL_LABELS = {
+    "deepseek-v4-flash": "DeepSeek 4.1",
+    "deepseek-v4-pro": "DeepSeek 4.0 Pro",
+}
 
 # 所有 tier 永久禁止的 P4 危险操作
 _P4_DANGER = [
@@ -115,6 +120,49 @@ def _load_sessions() -> dict:
 
 sessions: dict = _load_sessions()
 
+model_preferences_lock = threading.RLock()
+
+
+def _load_model_preferences() -> dict:
+    try:
+        with open(MODEL_PREFERENCES_FILE, "r", encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_model_preferences(preferences: dict) -> None:
+    try:
+        MODEL_PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(MODEL_PREFERENCES_FILE, "w", encoding="utf-8") as f:
+            json.dump(preferences, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[RUNTIME] model preference save error: {e}", flush=True)
+
+
+def resolve_model(chat_id: str, chat_type: str = "p2p") -> str:
+    key = session_key(chat_id, chat_type=chat_type)
+    with model_preferences_lock:
+        model = _load_model_preferences().get(key, DEFAULT_MODEL)
+    return model if model in MODEL_LABELS else DEFAULT_MODEL
+
+
+def set_model(chat_id: str, model: str, chat_type: str = "p2p") -> str:
+    if model not in MODEL_LABELS:
+        raise ValueError(f"unsupported model: {model}")
+    key = session_key(chat_id, chat_type=chat_type)
+    with model_preferences_lock:
+        preferences = _load_model_preferences()
+        preferences[key] = model
+        _save_model_preferences(preferences)
+    return model
+
+
+def describe_model(chat_id: str, chat_type: str = "p2p") -> str:
+    model = resolve_model(chat_id, chat_type)
+    return f"当前会话模型：**{MODEL_LABELS[model]}**（`{model}`）"
+
 def session_key(chat_id: str, sender_id: str = "", chat_type: str = "p2p") -> str:
     return (f"group:{chat_id}" if chat_type == "group"
             else f"private:{chat_id}")
@@ -191,9 +239,11 @@ def _tool_brief(name: str, inp: dict) -> str:
 
 def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                 extra_deny: list[str], timeout: int,
+                model: str = DEFAULT_MODEL,
                 progress_cb=None) -> tuple[str, str | None, int]:
     """返回 (结果文本, session_id, 工具调用次数)。超时抛 TimeoutError。"""
-    cmd = [CLAUDE_EXE, "-p", prompt, "--model", FIXED_MODEL,
+    model = model if model in MODEL_LABELS else DEFAULT_MODEL
+    cmd = [CLAUDE_EXE, "-p", prompt, "--model", model,
            "--output-format", "stream-json", "--verbose"]
     if session_id:
         cmd += ["--resume", session_id]
@@ -207,7 +257,7 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                                 "ANTHROPIC_DEFAULT_OPUS_MODEL"}:
         if key in {"ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"} or (
                 key.startswith("ANTHROPIC_DEFAULT_") and key.endswith("_MODEL")):
-            child_env[key] = FIXED_MODEL
+            child_env[key] = model
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", cwd=str(cwd), bufsize=1, env=child_env)
     killed = {"v": False}
@@ -328,6 +378,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     """
     profile = profile or resolve_profile(chat_id)
     tier = resolve_tier(sender_id)
+    model = resolve_model(chat_id, chat_type)
     cwd = _profile_cwd(profile)
     if cwd is None or not cwd.exists():
         unavailable = (
@@ -357,8 +408,9 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     with _chat_lock(chat_id):
         session_id = _get_chat_data(scope_key).get("active")
         try:
-            print(f"[RUNTIME] profile={profile} tier={tier} chat={chat_id[:12]}...", flush=True)
+            print(f"[RUNTIME] profile={profile} tier={tier} model={model} chat={chat_id[:12]}...", flush=True)
             result, new_sid, tools = _run_claude(prompt, session_id, cwd, deny, timeout,
+                                                 model=model,
                                                  progress_cb=progress_cb)
             if new_sid:
                 _add_to_history(scope_key, new_sid)
@@ -374,6 +426,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     _audit({
         "time": int(t0), "chat_id": chat_id, "sender": sender_id,
         "profile": profile, "tier": tier, "ok": ok, "err": err,
+        "model": model,
         "duration_s": duration, "tools": tools, "text": text[:200],
     })
     return result, {"ok": ok, "tools": tools, "duration": duration, "err": err}

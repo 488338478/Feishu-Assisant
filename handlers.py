@@ -39,6 +39,10 @@ _SESSION_CONTROL_INTENTS = (
     "不要记得", "别记得",
 )
 
+_MODEL_QUERY_INTENTS = ("当前模型", "查看模型", "查看当前模型", "模型列表", "现在用什么模型", "现在是什么模型", "正在用什么模型")
+_MODEL_SWITCH_PREFIXES = ("切换模型", "更换模型", "换模型", "切换到模型", "使用模型")
+_MODEL_FUZZY_INTENTS = ("想换模型", "想换个模型", "想切换模型", "想更换模型", "怎么切模型", "如何切换模型")
+
 _P4_ACTION_WORDS = (
     "进入", "打开", "看看", "查看", "读取", "检索", "搜索", "检查", "分析",
     "列出", "有哪些", "有啥", "状态", "提交", "变更", "文件", "代码", "仓库",
@@ -90,6 +94,38 @@ def _session_control_guidance(text: str) -> str | None:
     return None
 
 
+def _model_guidance(detail: str = "") -> str:
+    suffix = f"\n{detail}" if detail else ""
+    return (
+        "只支持以下两个模型，请发送明确指令：\n"
+        "「切换模型 DeepSeek 4.1」\n"
+        "「切换模型 DeepSeek 4.0 Pro」\n"
+        "也可以发送「当前模型」查看当前选择。"
+        f"{suffix}"
+    )
+
+
+def _parse_model_command(text: str) -> tuple[str, str | None] | None:
+    normalized = "".join(text.lower().split())
+    if normalized in _MODEL_QUERY_INTENTS:
+        return "query", None
+    prefix = next((item for item in _MODEL_SWITCH_PREFIXES
+                   if normalized.startswith(item)), None)
+    if prefix:
+        value = normalized[len(prefix):].lstrip("：:=-")
+        value = value.removeprefix("为").removeprefix("到").removeprefix("成")
+        aliases = {
+            "deepseek4.1": "deepseek-v4-flash", "deepseek41": "deepseek-v4-flash",
+            "4.1": "deepseek-v4-flash", "41": "deepseek-v4-flash", "flash": "deepseek-v4-flash",
+            "deepseek4.0pro": "deepseek-v4-pro", "deepseek40pro": "deepseek-v4-pro",
+            "4.0pro": "deepseek-v4-pro", "40pro": "deepseek-v4-pro", "pro": "deepseek-v4-pro",
+        }
+        return "switch", aliases.get(value, "")
+    if any(intent in normalized for intent in _MODEL_FUZZY_INTENTS):
+        return "fuzzy", None
+    return None
+
+
 def set_bot_open_id(open_id: str) -> None:
     global BOT_OPEN_ID
     BOT_OPEN_ID = open_id
@@ -109,6 +145,19 @@ def process_message(
     session_guidance = _session_control_guidance(text)
     if session_guidance:
         return session_guidance
+
+    model_command = _parse_model_command(text)
+    if model_command:
+        action, model = model_command
+        if action == "query":
+            return runtime.describe_model(chat_id, chat_type)
+        if action == "fuzzy":
+            return _model_guidance()
+        if not model:
+            return _model_guidance("未识别这个模型名称。")
+        runtime.set_model(chat_id, model, chat_type)
+        return f"已将当前会话模型切换为 **{runtime.MODEL_LABELS[model]}**（`{model}`）。后续请求生效。"
+
     # 调度配置命令：确定性指令，直接处理，不走 agent
     cfg_result = scheduler.configure(text)
     if cfg_result:
