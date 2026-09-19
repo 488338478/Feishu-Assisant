@@ -61,6 +61,7 @@ TIER_DESC = {
 _DEFAULT_RUNTIME_CONFIG = {
     "default_profile": "docs",
     "chat_profiles": {},   # chat_id → profile 名
+    "user_profiles": {},   # open_id → profile 名（优先级高于 chat_profiles）
     "default_tier": "read",
     "user_tiers": {},      # open_id → tier
 }
@@ -80,8 +81,11 @@ def _load_runtime_config() -> dict:
         print(f"[RUNTIME] config error: {e}", flush=True)
     return cfg
 
-def resolve_profile(chat_id: str) -> str:
+def resolve_profile(chat_id: str, sender_id: str = "") -> str:
     cfg = _load_runtime_config()
+    # 用户级 profile 优先级最高
+    if sender_id and sender_id in cfg.get("user_profiles", {}):
+        return cfg["user_profiles"][sender_id]
     return cfg["chat_profiles"].get(chat_id, cfg["default_profile"])
 
 def resolve_tier(sender_id: str) -> str:
@@ -91,7 +95,7 @@ def resolve_tier(sender_id: str) -> str:
 
 def describe_access(chat_id: str, sender_id: str) -> str:
     """「我的权限」命令。"""
-    profile = resolve_profile(chat_id)
+    profile = resolve_profile(chat_id, sender_id)
     tier = resolve_tier(sender_id)
     return ("## 你的权限\n"
             f"- 当前群模式：**{profile}**\n"
@@ -326,7 +330,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     返回 (最终文本, stats{ok, tools, duration, err})。
     progress_cb(brief, n) 在每次工具调用时回调（可为 None）。
     """
-    profile = profile or resolve_profile(chat_id)
+    profile = profile or resolve_profile(chat_id, sender_id)
     tier = resolve_tier(sender_id)
     cwd = _profile_cwd(profile)
     if cwd is None or not cwd.exists():

@@ -122,7 +122,7 @@ def process_message(
 
     # P4 工作区是 dev profile 的能力边界。未配置时直接说明，避免模型把 P4V
     # 误判成飞书资料名并调用 wiki/drive/docs 搜索。
-    if _requires_dev_profile(text) and runtime.resolve_profile(chat_id) != "dev":
+    if _requires_dev_profile(text) and runtime.resolve_profile(chat_id, sender_id) != "dev":
         return _dev_profile_guidance(chat_id)
 
     # 预检明确要求 user 的操作；支持 bot 的共享资源仍保持 bot-first。
