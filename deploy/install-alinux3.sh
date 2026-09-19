@@ -11,6 +11,19 @@ CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION:-2.1.162}
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
+env_value() {
+  local key=$1 value first last
+  value=$(sed -n "s/^${key}=//p" "$AGENT_HOME/assistant.env" 2>/dev/null | tail -n 1)
+  value=${value%$'\r'}
+  if (( ${#value} >= 2 )); then
+    first=${value:0:1}
+    last=${value: -1}
+    if [[ $first == '"' && $last == '"' ]] || [[ $first == "'" && $last == "'" ]]; then
+      value=${value:1:${#value}-2}
+    fi
+  fi
+  printf '%s' "$value"
+}
 
 [[ $EUID -eq 0 ]] || fail "请使用 sudo bash deploy/install-alinux3.sh"
 [[ -r /etc/os-release ]] || fail "无法识别操作系统"
@@ -69,6 +82,27 @@ chown -R "$AGENT_USER:$AGENT_USER" "$AGENT_HOME/venv" "$AGENT_HOME/data" "$AGENT
 
 step "安装 systemd unit"
 install -o root -g root -m 0644 "$REPO_DIR/deploy/assistant.service" /etc/systemd/system/assistant.service
+P4_DROPIN_DIR=/etc/systemd/system/assistant.service.d
+P4_DROPIN_FILE=$P4_DROPIN_DIR/p4-workspace.conf
+P4_WORKSPACE_VALUE=$(env_value P4_WORKSPACE)
+if [[ -n $P4_WORKSPACE_VALUE ]]; then
+  [[ $P4_WORKSPACE_VALUE == /* ]] || fail "P4_WORKSPACE 必须是绝对路径"
+  [[ $P4_WORKSPACE_VALUE =~ ^/[A-Za-z0-9._/@:+-]+$ ]] || \
+    fail "P4_WORKSPACE 含 systemd drop-in 不支持的字符；请使用无空格的服务器路径"
+  [[ -d $P4_WORKSPACE_VALUE ]] || fail "P4_WORKSPACE 目录不存在：$P4_WORKSPACE_VALUE"
+  P4_WORKSPACE_REAL=$(realpath -e -- "$P4_WORKSPACE_VALUE")
+  install -d -o root -g root -m 0755 "$P4_DROPIN_DIR"
+  install -o root -g root -m 0644 /dev/null "$P4_DROPIN_FILE"
+  {
+    echo '[Service]'
+    printf 'ReadWritePaths=%s\n' "$P4_WORKSPACE_VALUE"
+    if [[ $P4_WORKSPACE_REAL != "$P4_WORKSPACE_VALUE" ]]; then
+      printf 'ReadWritePaths=%s\n' "$P4_WORKSPACE_REAL"
+    fi
+  } > "$P4_DROPIN_FILE"
+else
+  rm -f -- "$P4_DROPIN_FILE"
+fi
 systemctl daemon-reload
 systemctl enable assistant.service
 

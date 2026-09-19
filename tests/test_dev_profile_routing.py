@@ -1,8 +1,9 @@
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 assistant_package = types.ModuleType("assistant")
@@ -78,6 +79,22 @@ class DevProfileRoutingTests(unittest.TestCase):
 
         self.assertIn("P4_WORKSPACE", result)
         self.assertFalse(stats["ok"])
+
+    def test_writable_tier_fails_before_agent_when_systemd_mount_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(handlers.runtime, "_profile_cwd", return_value=Path(tmp)), \
+             patch.object(handlers.runtime, "resolve_tier", return_value="submit"), \
+             patch.object(handlers.runtime.os, "statvfs", return_value=Mock(f_flag=1), create=True), \
+             patch.object(handlers.runtime.os, "ST_RDONLY", 1, create=True), \
+             patch.object(handlers.runtime, "_run_claude") as run_claude:
+            result, stats = REAL_RUNTIME_RUN(
+                "oc_dev_group", "创建测试文件", sender_id="ou_user", profile="dev"
+            )
+
+        self.assertIn("ReadWritePaths", result)
+        self.assertIn("只读", result)
+        self.assertFalse(stats["ok"])
+        run_claude.assert_not_called()
 
 
 if __name__ == "__main__":

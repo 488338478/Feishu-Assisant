@@ -21,6 +21,7 @@ NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths=/srv/agent/data /srv/agent/home
+# install-alinux3.sh 根据 assistant.env 的 P4_WORKSPACE 生成额外 drop-in。
 PrivateTmp=true
 
 [Install]

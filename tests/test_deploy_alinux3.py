@@ -23,6 +23,20 @@ class AlibabaLinuxDeploymentAssetsTests(unittest.TestCase):
         self.assertIn("/srv/agent/npm/bin", text)
         self.assertIn("ExecStart=/srv/agent/venv/bin/python -m assistant.main", text)
 
+    def test_installer_adds_configured_p4_workspace_to_systemd_write_paths(self):
+        text = (ROOT / "deploy" / "install-alinux3.sh").read_text(encoding="utf-8")
+        self.assertIn("assistant.service.d", text)
+        self.assertIn("p4-workspace.conf", text)
+        self.assertIn("ReadWritePaths", text)
+        self.assertIn("P4_WORKSPACE", text)
+
+    def test_verifier_checks_p4_unix_and_systemd_write_access(self):
+        text = (ROOT / "deploy" / "verify-alinux3.sh").read_text(encoding="utf-8")
+        self.assertIn('runuser -u agent -- test -w "$P4_WORKSPACE_VALUE"', text)
+        self.assertIn("systemctl show assistant.service", text)
+        self.assertIn("ReadWritePaths", text)
+        self.assertIn(".claude/settings.json", text)
+
     def test_verifier_never_prints_secret_values(self):
         text = (ROOT / "deploy" / "verify-alinux3.sh").read_text(encoding="utf-8")
         self.assertNotIn("cat \"$ENV_FILE\"", text)

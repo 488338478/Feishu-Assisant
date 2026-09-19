@@ -65,6 +65,10 @@ sudo -u agent env HOME=/srv/agent/home \
 ```
 
 助手通过 P4 CLI 和工作区文件读取仓库，并不远程操作 P4V 图形界面。
+安装脚本会根据 `P4_WORKSPACE` 自动生成 systemd drop-in，将工作区加入
+`ReadWritePaths`。修改工作区路径后必须重新运行 `install-alinux3.sh --start`；只重启
+服务不会更新 systemd 写白名单。`verify-alinux3.sh --live` 会检查 agent 用户写权限、
+dev profile 的 Write/Edit 配置和 systemd 白名单。
 
 ## 5. 配置人员与群权限
 

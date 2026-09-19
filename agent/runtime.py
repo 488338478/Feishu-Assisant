@@ -63,6 +63,34 @@ TIER_DESC = {
     "submit": "提交：可 p4 sync/submit，changelist 描述带飞书用户归因",
 }
 
+_DEV_WRITE_WORDS = (
+    "修改", "改代码", "写代码", "创建", "新建", "新增", "修复", "实现",
+    "重构", "删除文件", "提交", "p4 edit", "p4 add", "p4 submit", "p4 sync",
+)
+_DOCUMENT_WORDS = ("飞书文档", "云文档", "知识库", "wiki")
+
+
+def _requires_dev_write(text: str) -> bool:
+    lowered = text.lower()
+    if any(word in lowered for word in _DOCUMENT_WORDS) and not any(
+            word in lowered for word in ("代码", "仓库", "工作区", "p4", "文件")):
+        return False
+    return any(word in lowered for word in _DEV_WRITE_WORDS)
+
+
+def _workspace_write_issue(cwd: Path) -> str | None:
+    try:
+        statvfs = getattr(os, "statvfs", None)
+        if statvfs is not None:
+            flags = statvfs(cwd).f_flag
+            if flags & getattr(os, "ST_RDONLY", 1):
+                return "P4 工作区在 assistant.service 内是只读挂载"
+    except OSError as e:
+        return f"无法检查 P4 工作区挂载状态：{e}"
+    if not os.access(cwd, os.W_OK):
+        return "运行 assistant.service 的 agent 用户没有 P4 工作区写权限"
+    return None
+
 _DEFAULT_RUNTIME_CONFIG = {
     "default_profile": "docs",
     "chat_profiles": {},   # chat_id → profile 名
@@ -390,6 +418,14 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
         )
         return unavailable, \
                {"ok": False, "tools": 0, "duration": 0.0, "err": "profile_unavailable"}
+
+    if profile == "dev" and tier in {"edit", "submit"} and _requires_dev_write(text):
+        write_issue = _workspace_write_issue(cwd)
+        if write_issue:
+            return (
+                f"当前不能修改代码：{write_issue}。请管理员重新运行部署脚本，让 systemd "
+                "的 `ReadWritePaths` 包含实际 `P4_WORKSPACE`，并确认 agent 用户可写该目录。"
+            ), {"ok": False, "tools": 0, "duration": 0.0, "err": "workspace_readonly"}
 
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)

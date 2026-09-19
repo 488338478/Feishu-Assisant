@@ -60,13 +60,21 @@ P4CLIENT=实际client名
 ```
 
 不要把真实值提交回 Git。systemd 不继承管理员 shell 的 P4 环境；P4 ticket 和工作区
-必须能被 `agent` 用户读取。把 dev profile 安装到实际工作区并填写项目说明：
+必须能被 `agent` 用户读取。需要改代码时，工作区还必须能被 `agent` 用户写入。
+`install-alinux3.sh` 会读取 `P4_WORKSPACE`，生成
+`/etc/systemd/system/assistant.service.d/p4-workspace.conf`，把实际工作区加入 systemd
+的 `ReadWritePaths`。每次修改 `P4_WORKSPACE` 后都必须重新运行安装脚本。
+
+把 dev profile 安装到实际工作区并填写项目说明：
 
 ```bash
 sudo cp -a /srv/agent/assistant/profiles/dev/. /实际的/client/root/
 sudo chown -R agent:agent /实际的/client/root/.claude /实际的/client/root/CLAUDE.md
 sudoedit /实际的/client/root/CLAUDE.md
 ```
+
+不要只根据 root 用户能否写入判断权限。部署验收会同时检查 `agent` 用户的 Unix
+写权限、dev profile 的 Write/Edit 配置，以及 systemd 的写路径白名单。
 
 从 `/srv/agent/data/audit_log.jsonl` 最近一条目标群记录取得 `chat_id`，然后编辑
 `/srv/agent/data/runtime_config.json`，保留已有配置并在 `chat_profiles` 中加入：
@@ -78,8 +86,8 @@ sudoedit /实际的/client/root/CLAUDE.md
 `runtime_config.json` 每次请求都会重读；修改群映射不用重启。环境变量修改后执行：
 
 ```bash
-sudo systemctl restart assistant.service
-sudo systemctl status assistant.service --no-pager
+sudo bash /srv/agent/assistant/deploy/install-alinux3.sh --start
+sudo bash /srv/agent/assistant/deploy/verify-alinux3.sh --live
 ```
 
 在目标群依次发送“我的权限”和“进入 P4V 看看仓库有什么”。第一条应显示
@@ -117,6 +125,8 @@ sudo journalctl -u assistant.service -n 100 --no-pager
 4. 私聊尝试要求读取某个群的记录，确认被拒绝。
 5. 发送“清除上下文”，确认当前私聊或当前群共享上下文被清除。
 6. 读取一次日历；若缺少 scope，应明确提示 `calendar:calendar.event:read`。
+7. 在 dev 群用 edit/submit 用户创建一个客户端视图内的测试文件；确认没有
+   `ReadWritePaths` 或“工作区只读”错误，再按团队规则处理测试文件。
 
 验收完成后记录 commit、时间、执行人、飞书应用版本和两条 verify 命令的结果。不得记录密钥。
 

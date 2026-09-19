@@ -15,6 +15,19 @@ has_real_value() {
   value=$(sed -n "s/^${key}=//p" "$ENV_FILE" 2>/dev/null | tail -n 1)
   [[ -n $value && $value != *xxx* && $value != *CHANGE_ME* ]]
 }
+env_value() {
+  local key=$1 value first last
+  value=$(sed -n "s/^${key}=//p" "$ENV_FILE" 2>/dev/null | tail -n 1)
+  value=${value%$'\r'}
+  if (( ${#value} >= 2 )); then
+    first=${value:0:1}
+    last=${value: -1}
+    if [[ $first == '"' && $last == '"' ]] || [[ $first == "'" && $last == "'" ]]; then
+      value=${value:1:${#value}-2}
+    fi
+  fi
+  printf '%s' "$value"
+}
 check_command() {
   command -v "$1" >/dev/null 2>&1 && ok "$1: $(command -v "$1")" || bad "$1 不可用"
 }
@@ -35,6 +48,34 @@ fi
 if [[ -f "$ENV_FILE" && $MODE != "--install" ]]; then
   has_real_value FEISHU_APP_ID && ok "FEISHU_APP_ID 已配置" || bad "FEISHU_APP_ID 仍为空或为占位值"
   has_real_value FEISHU_APP_SECRET && ok "FEISHU_APP_SECRET 已配置" || bad "FEISHU_APP_SECRET 仍为空或为占位值"
+
+  P4_WORKSPACE_VALUE=$(env_value P4_WORKSPACE)
+  if [[ -n $P4_WORKSPACE_VALUE ]]; then
+    if [[ -d $P4_WORKSPACE_VALUE ]]; then
+      ok "P4_WORKSPACE 目录存在"
+    else
+      bad "P4_WORKSPACE 目录不存在"
+    fi
+    if runuser -u agent -- test -w "$P4_WORKSPACE_VALUE"; then
+      ok "agent 用户可写 P4 工作区"
+    else
+      bad "agent 用户不可写 P4 工作区；请修正目录属主或 ACL"
+    fi
+    if [[ -f "$P4_WORKSPACE_VALUE/.claude/settings.json" ]] \
+      && grep -q '"Write"' "$P4_WORKSPACE_VALUE/.claude/settings.json" \
+      && grep -q '"Edit"' "$P4_WORKSPACE_VALUE/.claude/settings.json"; then
+      ok "dev profile 已启用 Write/Edit"
+    else
+      bad "P4 工作区缺少允许 Write/Edit 的 .claude/settings.json"
+    fi
+    P4_WORKSPACE_REAL=$(realpath -e -- "$P4_WORKSPACE_VALUE" 2>/dev/null || printf '%s' "$P4_WORKSPACE_VALUE")
+    SERVICE_WRITE_PATHS=$(systemctl show assistant.service --property=ReadWritePaths --value 2>/dev/null || true)
+    if grep -Fq -- "$P4_WORKSPACE_REAL" <<< "$SERVICE_WRITE_PATHS"; then
+      ok "systemd 允许服务写 P4 工作区"
+    else
+      bad "assistant.service 的 ReadWritePaths 未包含 P4_WORKSPACE"
+    fi
+  fi
 fi
 
 if [[ -x "$AGENT_HOME/venv/bin/python" && -f "$REPO_DIR/main.py" ]]; then
