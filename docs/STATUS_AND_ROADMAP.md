@@ -1,8 +1,6 @@
 # Assistant 功能现状与开发方向
 
-核对日期：2026-09-19。本文根据当前源代码、本地配置和现有测试整理；工作区仍包含尚未拆分提交的并行改动。
-
-整理期间工作区出现其他来源的测试改动，涉及搜索身份规则、项目命名和 CLI 版本约束；本次未修改或验收那些并行改动。本文及 34 项测试结果对应本次读取的基线，相关实现合入后需重新核对。
+核对日期：2026-09-25。本文根据当前源代码、本地测试和 Alibaba Cloud Linux 3 服务器验收结果整理。
 
 ## 1. 现状判断
 
@@ -27,24 +25,24 @@
 | 文档评论 | 首次 @，紧接机器人回复的追问可免 @；按评论线程续会话，精确读取触发回复并原处回复 | 已实现并有离线回归；2026-09-12 回读确认两条真实 @/免 @请求成功，见[实测记录](COMMENT_MENTION_E2E_REPORT.md)；缺少处理中回执，边界场景仍待验收 | `feishu/comment_service.py`、`tests/test_doc_comment.py` |
 | 三种模式 | docs、thesis、dev 按 user、chat、default 优先级路由 | docs 可直接使用模板；另外两种需部署到目标 cwd | `agent/runtime.py`、`profiles/` |
 | 人员权限 | read/edit/submit 叠加 CLI deny，P4 提交归因约定 | 已实现规则；read 仍能执行飞书写操作，非统一资源只读 | 同上 |
-| P4 研发助手 | 查历史、评审、日志、bug 分析和 feature 的技能模板 | 模板已存在；实际工作区与服务端权限尚需配置验收 | `profiles/dev/` |
+| P4 研发助手 | 查历史、评审、日志、bug 分析和 feature 的技能模板 | 服务器工作区写权限、dev Write/Edit 和 systemd 写路径已验收；具体 depot/client view 与 P4 protections 仍由项目配置决定 | `profiles/dev/` |
 | 跨会话记忆 | 从消息正则抽取进展/计划/负责人，字符 bigram 相似召回 top 5 | 轻量原型；无 embedding 模型、无全量知识库索引、全局共享 | `core/memory.py`、`vector_store.py` |
 | 每日摘要 | 日程 + 任务 + 相关记忆，指定时间推送 | 已实现调度代码；依赖目标、身份、进程常驻 | `core/scheduler.py` |
 | 会议归档 | 间隔检查会议，取纪要并创建文档 | 基础流程；每次最多处理前 3 条，截取 3000 字符，不是 AI 总结与待办闭环 | 同上 |
 | 任务到期提醒 | 间隔查询任务，筛选逾期/临近日期并推送 | 基础流程；日期处理和去重需要完善 | 同上 |
 | 每周 Agent 任务 | JSON 配置任意 prompt，按周调用 runtime 并发到目标会话 | 已实现配置机制；当前默认空列表，无任务管理界面 | 同上 |
-| 审计与部署 | 调用摘要 JSONL、Windows 启动脚本、Linux systemd/setup 模板 | 已具备基础；不是逐工具完整审计或已验收服务器部署 | `agent/runtime.py`、`deploy/` |
+| 审计与部署 | 调用摘要 JSONL、Windows 启动脚本、Alibaba Cloud Linux 3 systemd 安装与验收脚本 | 服务器部署已验收；审计仍不是逐工具完整事件流 | `agent/runtime.py`、`deploy/` |
 
 ## 3. 当前本地配置与验证
 
 - `data/runtime_config.json` 是 docs/read 默认配置，群映射和成员层级表均为空。
 - 包内没有 `scheduler_config.json`；代码回退默认配置：引擎及三个内置任务开关为 true，但推送目标为空、agent_jobs 为空。没有推送目标不代表会议归档停用。
-- 本次检查的终端未设置 FEISHU_APP_ID、FEISHU_APP_SECRET、THESIS_DIR、P4_WORKSPACE、ASSISTANT_DATA_DIR 或 LARK_CLI_PROFILE。不能据此推断其他已启动进程的环境。
-- PATH 可发现 Python 3.13.2、claude、lark-cli 和 p4；未验证各 CLI 的认证或在线业务执行。
+- 生产服务位于 Alibaba Cloud Linux 3，代码目录 `/srv/agent/assistant`，数据目录 `/srv/agent/data`，由 systemd 常驻运行；密钥只保存在服务器环境文件中。
+- 部署验收已确认 Python venv、claude、lark-cli、代码目录、数据目录、P4 工作区写权限、dev 工具配置和 systemd 状态。
 - 现有本地审计共 20 条，均为 docs：16 条标记 ok、4 条失败。这只能证明过去发生过 runtime 调用，不能证明每项飞书操作成功。
-- 本地测试覆盖授权、群聊门控、群聊原文存储/检索/跨群拒绝、bot 身份、启动配置同步、评论和 prompt。最终测试数量以本次开发完成后的验证输出为准；尚未运行群聊检索的在线飞书/Claude 端到端测试。
+- 150 个本地测试覆盖授权、群聊门控、群聊原文存储/检索/跨群拒绝、bot 身份、profile/tier、会话恢复、模型切换、启动配置同步、评论和 prompt；尚未逐项运行所有飞书/Claude 在线业务端到端场景。
 
-本次仅整理文档，没有启动机器人、操作飞书资源或改动运行配置。
+2026-09-25 已完成服务器拉取、部署脚本验收、服务重启和 WebSocket 重连检查。
 
 ## 4. 现有文档有哪些问题
 
@@ -56,7 +54,7 @@
 | `ARCHITECTURE_DIAGRAM.md` | docs 标为“只读知识库”不准确；没有覆盖授权回退和群聊 @ 门控 |
 | `PLAN.md` | 同时保留“待批准”“bot 无法启动”等历史状态与已完成记录，不能当当前待办 |
 | `handoff-20260909-025106.md` | “非 git 仓库”及待认证修复状态已落后；当前目录已有 Git 历史 |
-| `deploy/README.md` / `setup.sh` | 预先登录和普通群消息触发的旧说明已落后；应按按需授权、群聊 @ 规则操作 |
+| `deploy/README.md` / `install-alinux3.sh` | 当前 Alibaba Cloud Linux 3 部署入口；主仓为服务器裸仓库，GitHub 仅作备份 remote |
 | 授权设计 | 并发复用链接、逐 scope 判断等设计意图并未完整落实；等待者目前只复用授权结果 |
 
 本次新增 [README](../README.md)、[操作手册](USER_GUIDE.md) 和本文作为当前阅读入口，历史文件保留追溯用途。

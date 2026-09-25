@@ -200,6 +200,6 @@ runtime 对 thesis/dev 仅切换 cwd，不会自动复制模板。目标目录�
 | 群里换人追问却丢失前文 | 群记忆和聊天记录按 `group:<chat_id>` 共享；底层 Claude 会话按 profile 隔离。检查两人是否命中不同 profile、是否换群，以及是否有人发送了清除会话命令 |
 | `No conversation found with session ID` | 运行时会清除当前 profile 的失效会话并自动重试一次；若仍出现，检查 CLI 会话目录是否被删除及审计日志中的 `session_recovered` |
 
-Linux 的路径规划、systemd 文件参见[部署指南](../deploy/README.md)。模板尚需真实服务账号验收：包括 CLI PATH、认证文件可写性，以及 `ProtectHome=read-only` 与 CLI 保存状态的兼容性。
+Linux 的路径规划、systemd 文件参见[部署指南](../deploy/README.md)。2026-09-25 已在 Alibaba Cloud Linux 3 验收 CLI PATH、服务启动、P4 工作区写权限、dev Write/Edit 配置和 systemd `ReadWritePaths`；新增 profile、CLI 版本或工作区路径后仍需重新运行部署验收。
 
 `data/` 保存会话、记忆、配置和审计；Claude 自己的会话数据及 lark-cli 授权数据不在这份目录内。维护备份需覆盖这些独立状态并控制访问权限。仓库尚无自动备份、恢复或日志轮转工具。

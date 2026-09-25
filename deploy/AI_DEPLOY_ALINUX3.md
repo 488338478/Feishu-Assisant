@@ -19,7 +19,7 @@
 ```bash
 sudo mkdir -p /srv/agent
 sudo chown "$USER":"$USER" /srv/agent
-export REPO_URL='https://github.com/488338478/Feishu-Assisant.git'
+export REPO_URL='/srv/git/Feishu-Assistant.git'
 export DEPLOY_REF='master'
 git clone --branch "$DEPLOY_REF" --single-branch "$REPO_URL" /srv/agent/assistant
 cd /srv/agent/assistant
