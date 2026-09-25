@@ -17,6 +17,7 @@ from pathlib import Path
 from ..config import (
     CLAUDE_EXE, CLAUDE_TIMEOUT, SESSIONS_FILE, RUNTIME_CONFIG_FILE,
     MODEL_PREFERENCES_FILE, AUDIT_LOG_FILE, PROFILES_DIR, P4_WORKSPACE, THESIS_DIR,
+    CONTEXT_COMPACTION_THRESHOLD_CHARS,
 )
 from ..core.memory import memory
 
@@ -243,6 +244,112 @@ def _add_to_history(chat_id: str, session_id: str) -> None:
     _save_sessions()
 
 
+def _context_estimate(scope_key: str) -> int:
+    with sessions_lock:
+        return int((_get_chat_data(scope_key).get("estimated_chars") or 0))
+
+
+def _save_pending_compaction(scope_key: str, pending: dict) -> None:
+    with sessions_lock:
+        data = _get_chat_data(scope_key)
+        data["pending_compaction"] = pending
+        _save_sessions()
+
+
+def has_pending_compaction(chat_id: str, sender_id: str = "", chat_type: str = "p2p",
+                           profile: str | None = None) -> bool:
+    profile = profile or resolve_profile(chat_id, sender_id)
+    scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
+    with sessions_lock:
+        return bool(sessions.get(scope_key, {}).get("pending_compaction"))
+
+
+def _compaction_message() -> str:
+    return (
+        "当前会话上下文已接近上限。是否先压缩上下文再继续刚才的请求？"
+        "请回复「确认压缩」或「取消压缩」。"
+    )
+
+
+def _compact_session(session_id: str, cwd: Path, deny: list[str], timeout: int,
+                     model: str) -> tuple[str | None, int]:
+    """Ask Claude Code to compact a resumed session."""
+    _, new_sid, tools = _run_claude(
+        "/compact", session_id, cwd, deny, timeout, model=model
+    )
+    return new_sid or session_id, tools
+
+
+def cancel_compaction(chat_id: str, sender_id: str = "", chat_type: str = "p2p",
+                      profile: str | None = None) -> tuple[str, dict]:
+    profile = profile or resolve_profile(chat_id, sender_id)
+    scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
+    with sessions_lock:
+        data = sessions.get(scope_key)
+        pending = data.get("pending_compaction") if data else None
+        if pending and pending.get("sender_id", "") != sender_id:
+            return "请由发起这次请求的用户确认或取消上下文压缩。", {"pending": True}
+        if not data or not data.pop("pending_compaction", None):
+            return "当前没有等待确认的上下文压缩请求。", {"pending": False}
+        _save_sessions()
+    return "已取消上下文压缩，原会话保持不变。", {"pending": False}
+
+
+def confirm_compaction(chat_id: str, sender_id: str = "", chat_type: str = "p2p",
+                       profile: str | None = None) -> tuple[str, dict]:
+    profile = profile or resolve_profile(chat_id, sender_id)
+    scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
+    with sessions_lock:
+        data = sessions.get(scope_key)
+        pending = dict(data.get("pending_compaction") or {}) if data else {}
+        session_id = data.get("active") if data else None
+    if not pending or not session_id:
+        return "当前没有等待确认的上下文压缩请求。", {"compacted": False}
+    if pending.get("sender_id", "") != sender_id:
+        return "请由发起这次请求的用户确认上下文压缩。", {"compacted": False}
+
+    cwd = _profile_cwd(profile)
+    if cwd is None or not cwd.exists():
+        return "当前工作区不可用，暂时无法压缩上下文。", {"compacted": False}
+    tier = resolve_tier(sender_id)
+    deny = TIER_DENY.get(tier, TIER_DENY["read"])
+    model = resolve_model(chat_id, chat_type)
+    timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
+    with _chat_lock(chat_id):
+        try:
+            compact_sid, compact_tools = _compact_session(
+                session_id, cwd, deny, timeout, model
+            )
+        except Exception as error:
+            return (
+                f"上下文压缩失败，原会话未改变：{str(error)[:200]}。请稍后重试或发送「清除上下文」。",
+                {"compacted": False, "err": "compaction_failed"},
+            )
+
+        with sessions_lock:
+            data = _get_chat_data(scope_key)
+            data["active"] = compact_sid or session_id
+            data["estimated_chars"] = 0
+            data.pop("pending_compaction", None)
+            _save_sessions()
+
+    replay_kwargs = {
+        key: value for key, value in pending.items()
+        if key in {"chat_id", "text", "sender_id", "profile", "force_user_domain",
+                   "chat_type", "group_history_context", "group_reply_to",
+                   "group_thread_id", "group_history_exhausted"}
+    }
+    replay_kwargs["_skip_compaction"] = True
+    response, stats = run(**replay_kwargs)
+    stats = {
+        **stats,
+        "compacted": True,
+        "compaction_tools": compact_tools,
+        "tools": stats.get("tools", 0) + compact_tools,
+    }
+    return response, stats
+
+
 def _discard_active_session(scope_key: str, expected_session_id: str) -> None:
     """丢弃已由 CLI 判定不存在的会话，保留历史记录供审计。"""
     with sessions_lock:
@@ -307,6 +414,9 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
         cmd += ["--disallowedTools"] + extra_deny
 
     child_env = os.environ.copy()
+    # The wrapper asks the user before compaction, so prevent Claude Code's
+    # own unattended auto-compact from racing this confirmation flow.
+    child_env["DISABLE_AUTO_COMPACT"] = "true"
     # 不改变认证或 API 地址；覆盖模型别名及子任务，避免继承昂贵模型。
     for key in set(child_env) | {"ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
                                 "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -426,7 +536,8 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
         progress_cb=None, force_user_domain: str | None = None,
         chat_type: str = "p2p", group_history_context: str | None = None,
         group_reply_to: str = "", group_thread_id: str = "",
-        group_history_exhausted: bool = False) -> tuple[str, dict]:
+        group_history_exhausted: bool = False,
+        _skip_compaction: bool = False) -> tuple[str, dict]:
     """处理一条消息：解析 profile/tier → 单次 CLI 调用。
 
     返回 (最终文本, stats{ok, tools, duration, err})。
@@ -472,6 +583,28 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     ok, err, tools, session_recovered = True, "", 0, False
     with _chat_lock(chat_id):
         session_id = _get_chat_data(conversation_scope_key).get("active")
+        if (session_id and not _skip_compaction and
+                _context_estimate(conversation_scope_key) + len(prompt)
+                >= CONTEXT_COMPACTION_THRESHOLD_CHARS):
+            _save_pending_compaction(conversation_scope_key, {
+                "chat_id": chat_id,
+                "text": text,
+                "sender_id": sender_id,
+                "profile": profile,
+                "force_user_domain": force_user_domain,
+                "chat_type": chat_type,
+                "group_history_context": group_history_context,
+                "group_reply_to": group_reply_to,
+                "group_thread_id": group_thread_id,
+                "group_history_exhausted": group_history_exhausted,
+            })
+            return _compaction_message(), {
+                "ok": True,
+                "tools": 0,
+                "duration": 0.0,
+                "err": "",
+                "needs_compaction": True,
+            }
         try:
             print(f"[RUNTIME] profile={profile} tier={tier} model={model} chat={chat_id[:12]}...", flush=True)
             try:
@@ -489,6 +622,13 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 tools += retry_tools
             if new_sid:
                 _add_to_history(conversation_scope_key, new_sid)
+                with sessions_lock:
+                    data = _get_chat_data(conversation_scope_key)
+                    data["estimated_chars"] = (
+                        _context_estimate(conversation_scope_key)
+                        + len(prompt) + len(result)
+                    )
+                    _save_sessions()
         except (TimeoutError, subprocess.TimeoutExpired):
             ok, err = False, "timeout"
             result = f"处理超时（{timeout}秒），请简化问题或稍后再试。"

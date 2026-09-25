@@ -26,6 +26,7 @@
 - profile 按 `user_profiles` → `chat_profiles` → `default_profile` 解析，read/edit/submit tier 再独立收窄工具权限。
 - 支持在飞书发送「切换模型 DeepSeek 4.1」「切换模型 DeepSeek 4.0 Pro」；模糊切换意图会返回明确指令。
 - 同群共享群聊记录和业务记忆，Claude resume 链按 profile 隔离；失效 session 会自动清除并重试一次。
+- 会话接近估算上下文上限时会先询问；用户回复「确认压缩」后执行 Claude Code `/compact` 并继续原请求，回复「取消压缩」则保留原会话。
 - dev 模式通过 P4 CLI 和工作区文件访问代码，不操作 P4V 图形界面。服务器部署脚本会验证 agent 写权限、dev Write/Edit 配置和 systemd 写路径。
 
 Windows 可运行 `start-assistant.bat`；终端启动需在本包父目录执行：
@@ -44,4 +45,4 @@ python -m assistant.main
 python -m unittest discover -s tests -v
 ```
 
-2026-09-25 核对：150 个测试通过，覆盖消息门控、群聊原文检索与跨群拒绝、profile/tier 路由、会话恢复、模型切换、授权、评论和部署配置。Alibaba Cloud Linux 3 上的 systemd、P4 工作区写权限及服务启动已通过部署脚本验收；测试仍不能替代每个飞书业务权限和多人身份场景的在线验收。
+2026-09-25 核对：156 个测试通过，覆盖消息门控、群聊原文检索与跨群拒绝、profile/tier 路由、会话恢复、上下文压缩确认、模型切换、授权、评论和部署配置。Alibaba Cloud Linux 3 上的 systemd、P4 工作区写权限及服务启动已通过部署脚本验收；测试仍不能替代每个飞书业务权限和多人身份场景的在线验收。

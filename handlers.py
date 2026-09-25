@@ -38,6 +38,8 @@ _SESSION_CONTROL_INTENTS = (
     "新建会话", "切换会话", "换个话题", "忘掉前面", "忘记前面",
     "不要记得", "别记得",
 )
+_COMPACTION_CONFIRM_COMMANDS = {"确认压缩", "压缩", "继续压缩"}
+_COMPACTION_CANCEL_COMMANDS = {"取消压缩", "暂不压缩", "不要压缩"}
 
 _MODEL_QUERY_INTENTS = ("当前模型", "查看模型", "查看当前模型", "模型列表", "现在用什么模型", "现在是什么模型", "正在用什么模型")
 _MODEL_SWITCH_PREFIXES = ("切换模型", "更换模型", "换模型", "切换到模型", "使用模型")
@@ -139,6 +141,22 @@ def process_message(
     message_id: str = "", chat_type: str = "p2p",
     reply_to: str = "", thread_id: str = "",
 ) -> str:
+    normalized_text = "".join(text.lower().split())
+    if normalized_text in _COMPACTION_CONFIRM_COMMANDS:
+        response, _ = runtime.confirm_compaction(
+            chat_id, sender_id=sender_id, chat_type=chat_type
+        )
+        return response
+    if normalized_text in _COMPACTION_CANCEL_COMMANDS:
+        response, _ = runtime.cancel_compaction(
+            chat_id, sender_id=sender_id, chat_type=chat_type
+        )
+        return response
+    has_pending = runtime.has_pending_compaction(
+        chat_id, sender_id=sender_id, chat_type=chat_type
+    )
+    if has_pending is True:
+        return "请先回复「确认压缩」或「取消压缩」，再处理新的请求。"
     if text.strip().lower() in _SESSION_CONTROL_COMMANDS:
         runtime.clear_session(chat_id, sender_id, chat_type)
         return "已清除当前会话上下文和关联记忆。"
