@@ -113,10 +113,15 @@ Claude 的认证由 Claude CLI 自身处理。Python 不要求 `ANTHROPIC_API_KE
 {
   "default_profile": "docs",
   "chat_profiles": {"oc_实际研发群ID": "dev"},
+  "user_profiles": {"ou_实际研发成员ID": "dev"},
   "default_tier": "read",
   "user_tiers": {"ou_实际成员ID": "edit"}
 }
 ```
+
+模式按 `user_profiles`、`chat_profiles`、`default_profile` 的顺序解析。用户级配置优先，
+因此指定为 dev 的成员可以在其他群和私聊中访问研发工作区；read/edit/submit 仍由
+`user_tiers` 独立限制。
 
 该文件每次 runtime 调用重新读取，无需重启。普通 Agent 请求的审计记录有 chat_id 和 sender；「我的权限」「查看配置」等快捷命令不会进入 runtime 审计。
 

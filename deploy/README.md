@@ -78,10 +78,14 @@ dev profile 的 Write/Edit 配置和 systemd 白名单。
 {
   "default_profile": "docs",
   "chat_profiles": { "oc_开发群chat_id": "dev" },
+  "user_profiles": { "ou_研发成员open_id": "dev" },
   "default_tier": "read",
   "user_tiers": { "ou_张三open_id": "submit", "ou_李四open_id": "edit" }
 }
 ```
+
+profile 解析顺序为 `user_profiles` → `chat_profiles` → `default_profile`。配置了用户级
+profile 后，该用户在其他群或私聊中也会进入对应模式；tier 仍由 `user_tiers` 单独控制。
 
 获取 open_id / chat_id 的方法：让成员在群里随便发一句话，看 `data/audit_log.jsonl` 里的 `sender` / `chat_id` 字段。
 
