@@ -17,7 +17,7 @@
 | 飞书消息接入 | WebSocket、私聊直接响应、群聊仅响应 @ 当前机器人 | 普通群消息不触发回复但进入当前群检索库；文字保存原文，非文字保存事件原始 content；依赖 `im:message.group_msg` | `main.py`、`handlers.py`、`feishu/message_gate.py` |
 | 群聊记录检索 | AI 按信息完整度自主请求当前群历史，宿主强制群范围，原文回灌、超长分片 | 禁止跨群和私聊读取；关键词仅供参考；默认自然文本 3000 字符、最多两轮 | `core/group_history.py`、`feishu/group_history_protocol.py` |
 | Agent 执行 | 每次 runtime 调用启动 claude -p，原生工具循环 | 已接入；普通超时 300 秒、dev 900 秒 | `agent/runtime.py` |
-| 多轮会话 | --resume、按聊天串行、聊天间可并发、保存 session 历史 | 群聊共享上下文并标记当前发送人，私聊独立；支持清除命令和自然语言意图引导 | `agent/runtime.py` |
+| 多轮会话 | --resume、按聊天串行、聊天间可并发、保存 session 历史 | 群记忆与历史共享，Claude resume 链按 profile 隔离；失效 session 自动清除并重试一次；支持清除命令和自然语言意图引导 | `agent/runtime.py` |
 | 进度反馈 | 思考表情、最近 5 条工具摘要、3 秒节流、完成统计 | 已接入；失败也可能显示完成文字 | `handlers.py` |
 | 飞书文档与知识库 | 搜索、读取、创建、更新、Wiki 浏览等规则与 lark-cli 工具入口 | Agent 能力已配置；依赖业务权限，不代表全场景已验收 | `profiles/docs/CLAUDE.md` |
 | 表格能力 | 通用 API 访问入口，内置多维表格表/记录查询示例 | 有通用工具路径；不是完整表格产品或批量导入导出流程 | 同上 |
@@ -25,7 +25,7 @@
 | 按需 OAuth | 发设备授权链接、等待完成、并发合并、bot 回退最多重试一次 | 已实现共享 profile 登录；非逐人身份绑定 | `feishu/auth.py` |
 | 启动配置同步 | 用应用凭证同步 lark-cli profile，secret 经 stdin 传递 | 已实现；授权与同步模块解析 Windows launcher | `feishu/lark_profile.py`、`lark_command.py` |
 | 文档评论 | 首次 @，紧接机器人回复的追问可免 @；按评论线程续会话，精确读取触发回复并原处回复 | 已实现并有离线回归；2026-09-12 回读确认两条真实 @/免 @请求成功，见[实测记录](COMMENT_MENTION_E2E_REPORT.md)；缺少处理中回执，边界场景仍待验收 | `feishu/comment_service.py`、`tests/test_doc_comment.py` |
-| 三种模式 | docs、thesis、dev 按 chat_id 路由 | docs 可直接使用模板；另外两种需部署到目标 cwd | `agent/runtime.py`、`profiles/` |
+| 三种模式 | docs、thesis、dev 按 user、chat、default 优先级路由 | docs 可直接使用模板；另外两种需部署到目标 cwd | `agent/runtime.py`、`profiles/` |
 | 人员权限 | read/edit/submit 叠加 CLI deny，P4 提交归因约定 | 已实现规则；read 仍能执行飞书写操作，非统一资源只读 | 同上 |
 | P4 研发助手 | 查历史、评审、日志、bug 分析和 feature 的技能模板 | 模板已存在；实际工作区与服务端权限尚需配置验收 | `profiles/dev/` |
 | 跨会话记忆 | 从消息正则抽取进展/计划/负责人，字符 bigram 相似召回 top 5 | 轻量原型；无 embedding 模型、无全量知识库索引、全局共享 | `core/memory.py`、`vector_store.py` |
@@ -68,7 +68,7 @@
 ### 优先级 0：多人使用前补边界
 
 1. **身份与授权绑定。** `ensure_user` 不接收 sender；`_already_logged_in` 只检查 identity == user，没有校验登录用户、所需 scope 或当前调用身份。不同人会复用同一登录；并发不同 domain 也直接复用首个结果。建议先明确只支持一个固定身份，或设计逐用户隔离后再开放个人查询。
-2. **会话和记忆隔离。** 会话只按 chat_id，群内多人共享；记忆没有 chat_id、sender 或资源权限过滤。建议区分项目共享记忆与个人记忆，召回时按权限过滤，模式变更使旧会话失效。
+2. **记忆权限分层。** Claude 会话已经按 chat + profile 隔离，群内业务记忆仍共享；记忆尚未区分项目共享内容与个人内容，也没有按资源权限过滤。建议增加个人/项目记忆层级，并在召回时按权限过滤。
 3. **管理指令权限。** 调度配置在 tier 判断前执行，没有管理员检查。推送目标和开关全局共享，普通用户可覆盖。应绑定管理员及群范围。
 4. **工作区与工具权限。** cwd 及 CLAUDE.md 是约定，不能替代完整隔离验证；thesis/dev 目标目录不自动加载包内模板，而且尚未同步 docs 的禁止自行登录规则。P4 多群并发共用工作区也没有工作区级锁。先做权限矩阵和并发边界验收，再开放写代码/提交。
 

@@ -2,7 +2,7 @@
 
 - 按 chat_id 选择 profile（决定 cwd 与权限天花板，见 profiles/<name>/.claude/）
 - 按 sender open_id 选择 tier（read/edit/submit），叠加 --disallowedTools 逐层收窄
-- --resume 续会话；per-chat 锁保证会话链不交错
+- --resume 会话按 chat + profile 隔离；per-chat 锁保证会话链不交错
 - 不再使用 bypassPermissions：未 allow 的工具在非交互模式下自动拒绝
 - 全量调用落 audit_log.jsonl
 """
@@ -136,7 +136,7 @@ def describe_access(chat_id: str, sender_id: str) -> str:
             "- 调整方式：管理员编辑数据目录下的 runtime_config.json（即时生效）")
 
 # ═══════════════════════════════════════════════════════════════════════
-# 会话持久化（群聊按群共享，私聊按 chat_id 隔离）
+# 会话持久化（业务上下文按群共享，CLI resume 链再按 profile 隔离）
 # ═══════════════════════════════════════════════════════════════════════
 
 sessions_lock = threading.RLock()
@@ -199,10 +199,21 @@ def session_key(chat_id: str, sender_id: str = "", chat_type: str = "p2p") -> st
     return (f"group:{chat_id}" if chat_type == "group"
             else f"private:{chat_id}")
 
+
+def conversation_key(chat_id: str, sender_id: str = "", chat_type: str = "p2p",
+                     profile: str = "docs") -> str:
+    """Claude CLI 会话键；不同工作目录的 profile 不能互相 resume。"""
+    return f"{session_key(chat_id, sender_id, chat_type)}:profile:{profile}"
+
+
 def clear_session(chat_id: str, sender_id: str = "", chat_type: str = "p2p") -> bool:
     key = session_key(chat_id, sender_id, chat_type)
     with sessions_lock:
-        removed = sessions.pop(key, None) is not None
+        keys = [stored_key for stored_key in sessions
+                if stored_key == key or stored_key.startswith(f"{key}:profile:")]
+        for stored_key in keys:
+            sessions.pop(stored_key, None)
+        removed = bool(keys)
     if removed:
         _save_sessions()
     clear_scope = getattr(memory, "clear_scope", None)
@@ -230,6 +241,19 @@ def _add_to_history(chat_id: str, session_id: str) -> None:
         data["history"] = data["history"][:20]
         data["active"] = session_id
     _save_sessions()
+
+
+def _discard_active_session(scope_key: str, expected_session_id: str) -> None:
+    """丢弃已由 CLI 判定不存在的会话，保留历史记录供审计。"""
+    with sessions_lock:
+        data = sessions.get(scope_key)
+        if data and data.get("active") == expected_session_id:
+            data["active"] = None
+            _save_sessions()
+
+
+def _is_missing_session_error(error: Exception) -> bool:
+    return "No conversation found with session ID:" in str(error)
 
 # per-chat 锁：同一群的 resume 链不交错
 _chat_locks: dict[str, threading.Lock] = {}
@@ -434,6 +458,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
     scope_key = session_key(chat_id, sender_id, chat_type)
+    conversation_scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
     prompt = _build_prompt(text, sender_id, tier, profile,
                             force_user_domain=force_user_domain,
                             memory_scope=scope_key,
@@ -444,16 +469,26 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                             group_history_exhausted=group_history_exhausted)
 
     t0 = time.time()
-    ok, err, tools = True, "", 0
+    ok, err, tools, session_recovered = True, "", 0, False
     with _chat_lock(chat_id):
-        session_id = _get_chat_data(scope_key).get("active")
+        session_id = _get_chat_data(conversation_scope_key).get("active")
         try:
             print(f"[RUNTIME] profile={profile} tier={tier} model={model} chat={chat_id[:12]}...", flush=True)
-            result, new_sid, tools = _run_claude(prompt, session_id, cwd, deny, timeout,
-                                                 model=model,
-                                                 progress_cb=progress_cb)
+            try:
+                result, new_sid, tools = _run_claude(prompt, session_id, cwd, deny, timeout,
+                                                     model=model,
+                                                     progress_cb=progress_cb)
+            except Exception as e:
+                if not session_id or not _is_missing_session_error(e):
+                    raise
+                _discard_active_session(conversation_scope_key, session_id)
+                session_recovered = True
+                print(f"[RUNTIME] stale session={session_id[:8]} profile={profile}; retrying", flush=True)
+                result, new_sid, retry_tools = _run_claude(
+                    prompt, None, cwd, deny, timeout, model=model, progress_cb=progress_cb)
+                tools += retry_tools
             if new_sid:
-                _add_to_history(scope_key, new_sid)
+                _add_to_history(conversation_scope_key, new_sid)
         except (TimeoutError, subprocess.TimeoutExpired):
             ok, err = False, "timeout"
             result = f"处理超时（{timeout}秒），请简化问题或稍后再试。"
@@ -467,6 +502,8 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
         "time": int(t0), "chat_id": chat_id, "sender": sender_id,
         "profile": profile, "tier": tier, "ok": ok, "err": err,
         "model": model,
+        "session_recovered": session_recovered,
         "duration_s": duration, "tools": tools, "text": text[:200],
     })
-    return result, {"ok": ok, "tools": tools, "duration": duration, "err": err}
+    return result, {"ok": ok, "tools": tools, "duration": duration, "err": err,
+                    "session_recovered": session_recovered}
