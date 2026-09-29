@@ -149,6 +149,27 @@ sudo bash deploy/verify-alinux3.sh --live
 
 若 `git status --short` 非空，停止升级，先查明服务器是否存在人工修改；不要 reset、stash 或覆盖。
 
+## 推送后自动更新（可选）
+
+默认部署不会自动更新工作树。若要让向 `/srv/git/Feishu-Assistant.git` 的 `master` 推送自动部署，先手动安装一次受控 wrapper 和 hook：
+
+```bash
+sudo install -o root -g root -m 0755 \
+  /srv/agent/assistant/deploy/auto-deploy.sh \
+  /usr/local/sbin/assistant-auto-deploy
+sudo install -o root -g root -m 0755 \
+  /srv/agent/assistant/deploy/post-receive \
+  /srv/git/Feishu-Assistant.git/hooks/post-receive
+```
+
+为实际执行 `git push` 的 SSH 账号配置最小 sudo 权限，仅允许执行固定 wrapper；不要给它 `NOPASSWD: ALL`：
+
+```text
+<git-ssh-user> ALL=(root) NOPASSWD: /usr/local/sbin/assistant-auto-deploy *
+```
+
+修改 sudoers 后用 `visudo -c` 验证。hook 只处理 `refs/heads/master`，要求工作树干净，执行 `git pull --ff-only`、部署测试和服务健康检查；任一步失败都会保留当前服务，不执行 `reset --hard`。
+
 ## 备份
 
 ```bash
