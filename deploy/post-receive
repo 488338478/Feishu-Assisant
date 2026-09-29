@@ -5,5 +5,5 @@ set -Eeuo pipefail
 # The SSH user must have passwordless sudo for this fixed wrapper.
 while read -r _old_rev new_rev ref_name; do
   [[ "$ref_name" == "refs/heads/master" ]] || continue
-  sudo -n /usr/local/sbin/assistant-auto-deploy "$new_rev"
+  sudo -n /usr/local/sbin/assistant-auto-deploy
 done

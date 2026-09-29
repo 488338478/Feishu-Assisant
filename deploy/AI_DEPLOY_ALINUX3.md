@@ -165,7 +165,7 @@ sudo install -o root -g root -m 0755 \
 为实际执行 `git push` 的 SSH 账号配置最小 sudo 权限，仅允许执行固定 wrapper；不要给它 `NOPASSWD: ALL`：
 
 ```text
-<git-ssh-user> ALL=(root) NOPASSWD: /usr/local/sbin/assistant-auto-deploy *
+<git-ssh-user> ALL=(root) NOPASSWD: /usr/local/sbin/assistant-auto-deploy
 ```
 
 修改 sudoers 后用 `visudo -c` 验证。hook 只处理 `refs/heads/master`，要求工作树干净，执行 `git pull --ff-only`、部署测试和服务健康检查；任一步失败都会保留当前服务，不执行 `reset --hard`。
