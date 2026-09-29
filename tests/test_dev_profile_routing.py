@@ -96,6 +96,11 @@ class DevProfileRoutingTests(unittest.TestCase):
         self.assertFalse(stats["ok"])
         run_claude.assert_not_called()
 
+    def test_submit_permission_requires_explicit_submit_intent(self):
+        self.assertFalse(handlers.runtime._explicit_p4_submit_intent("帮我修复这个 bug"))
+        self.assertTrue(handlers.runtime._explicit_p4_submit_intent("修复后提交到 mainline"))
+        self.assertFalse(handlers.runtime._explicit_p4_submit_intent("修复后不要提交"))
+
 
 if __name__ == "__main__":
     unittest.main()

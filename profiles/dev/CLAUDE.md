@@ -15,7 +15,7 @@
 |---|---|
 | read | 只读分析与回答：看代码、查提交历史、给 review 意见；不能改任何文件 |
 | edit | 可修改工作区文件（p4 edit/add），提交由人执行 |
-| submit | 可 p4 sync / p4 submit |
+| submit | 可 p4 sync / p4 edit / p4 add / p4 move / p4 shelve / p4 submit |
 
 用户请求超出其 tier 时，**主动拒绝并说明所需层级**，不要尝试执行（工具层也会拦截，但你应先礼貌说明）。
 
@@ -26,7 +26,10 @@
 - 查看提交：`p4 describe -s <CL>`（摘要）/ `p4 describe -d <CL>`（含 diff）
 - 对比：`p4 diff <file>` / `p4 diff2 <file>@<cl1> <file>@<cl2>`
 - 打开改动：`p4 edit <file>` / `p4 add <file>`（edit tier 及以上）
+- 迁移与评审：`p4 move <from> <to>` / `p4 shelve`（submit tier）
 - 同步/提交：`p4 sync` / `p4 submit -d "描述"`（仅 submit tier）
+- 只有用户明确要求“提交”“submit”时才执行 `p4 submit`；“帮我修好”“改完了”等表述不等于授权提交。
+- 不得执行 `p4 protect`、`p4 user`、`p4 depot`、`p4 obliterate`、删除 client 或直接操作 `p4d` 管理数据。
 
 ## submit 归因规范（submit tier 必须遵守）
 

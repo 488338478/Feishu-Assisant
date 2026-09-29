@@ -79,6 +79,14 @@ def _requires_dev_write(text: str) -> bool:
     return any(word in lowered for word in _DEV_WRITE_WORDS)
 
 
+def _explicit_p4_submit_intent(text: str) -> bool:
+    """Only allow direct submit when the user explicitly asks for it."""
+    lowered = text.lower()
+    if any(word in lowered for word in ("不要提交", "别提交", "不提交", "do not submit", "don't submit")):
+        return False
+    return any(word in lowered for word in ("p4 submit", "提交", "submit"))
+
+
 def _workspace_write_issue(cwd: Path) -> str | None:
     try:
         statvfs = getattr(os, "statvfs", None)
@@ -313,6 +321,8 @@ def confirm_compaction(chat_id: str, sender_id: str = "", chat_type: str = "p2p"
         return "当前工作区不可用，暂时无法压缩上下文。", {"compacted": False}
     tier = resolve_tier(sender_id)
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
+    if profile == "dev" and tier == "submit" and not _explicit_p4_submit_intent(text):
+        deny = deny + ["Bash(p4 submit:*)"]
     model = resolve_model(chat_id, chat_type)
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
     with _chat_lock(chat_id):

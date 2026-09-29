@@ -156,7 +156,7 @@ runtime 对 thesis/dev 仅切换 cwd，不会自动复制模板。目标目录�
 |---|---|
 | read | 禁止本地 Edit/Write 和 P4 修改；仍可经 lark-cli 创建、更新飞书文档 |
 | edit | 在模式许可下改本地文件、p4 edit/add；不允许 p4 sync/submit |
-| submit | 在模式许可下允许 p4 sync/submit |
+| submit | 在模式许可下允许 p4 sync/edit/add/move/shelve/submit；只有用户明确要求提交时才执行 `p4 submit` |
 
 **read 不是飞书资源只读。** 各层级都叠加禁止部分 P4 危险命令；这些是 CLI 权限规则与行为约定，不能仅凭 cwd 宣称实现了操作系统级文件隔离。
 

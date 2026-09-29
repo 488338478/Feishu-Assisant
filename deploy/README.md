@@ -49,7 +49,10 @@ P4 服务端 protections（`p4 protect`，bot 账号无 super，最后防线）�
 Protections:
 	read user assistant-bot * //depot/...
 	write user assistant-bot * //depot/dev/...
+	write user assistant-bot * //streamsDepot/mainline/...
 ```
+
+上面的 mainline 写权限仅在明确允许 AI 直接提交时启用；如果实际 stream depot 名称不同，必须替换为真实路径。P4 服务端仍应禁止该账号执行 `p4 protect`、用户/depot 管理、`obliterate` 和删除操作。Assistant 只有在用户明确说“提交”或“submit”时才会放行 `p4 submit`。
 
 同时在 `/srv/agent/assistant.env` 至少设置 `P4_WORKSPACE`，并按实际环境设置
 `P4PORT`、`P4USER`、`P4CLIENT`。systemd 不会继承管理员登录 shell 里的这些变量；
