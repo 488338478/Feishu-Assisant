@@ -83,12 +83,14 @@ dev profile 的 Write/Edit 配置和 systemd 白名单。
   "chat_profiles": { "oc_开发群chat_id": "dev" },
   "user_profiles": { "ou_研发成员open_id": "dev" },
   "default_tier": "read",
-  "user_tiers": { "ou_张三open_id": "submit", "ou_李四open_id": "edit" }
+  "user_tiers": { "ou_张三open_id": "submit", "ou_李四open_id": "edit" },
+  "admin_users": ["ou_管理员open_id"]
 }
 ```
 
 profile 解析顺序为 `user_profiles` → `chat_profiles` → `default_profile`。配置了用户级
 profile 后，该用户在其他群或私聊中也会进入对应模式；tier 仍由 `user_tiers` 单独控制。
+`admin_users` 中的飞书 open_id 可以在飞书内确认 Claude 的临时工具权限：回复「允许一次」「允许本次会话」或「拒绝」。授权请求默认 5 分钟过期；永久 deny、sudo、删除和权限管理操作不能通过该流程绕过。
 
 获取 open_id / chat_id 的方法：让成员在群里随便发一句话，看 `data/audit_log.jsonl` 里的 `sender` / `chat_id` 字段。
 

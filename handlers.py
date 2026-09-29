@@ -142,6 +142,9 @@ def process_message(
     reply_to: str = "", thread_id: str = "",
 ) -> str:
     normalized_text = "".join(text.lower().split())
+    requested_permission = runtime.permission_decision(text)
+    if requested_permission in {"once", "session", "deny"}:
+        return runtime.approve_permission(chat_id, sender_id, chat_type, requested_permission)
     if normalized_text in _COMPACTION_CONFIRM_COMMANDS:
         response, _ = runtime.confirm_compaction(
             chat_id, sender_id=sender_id, chat_type=chat_type
@@ -218,12 +221,16 @@ def process_message(
         else:
             update_message(client, progress["mid"], body)
 
+    def permission_cb(request: dict) -> None:
+        send_message(client, chat_id, runtime.permission_prompt_message(request))
+
     # agent 处理
     response, stats = runtime.run(
         chat_id,
         text,
         sender_id=sender_id,
         progress_cb=progress_cb,
+        permission_cb=permission_cb,
         force_user_domain=user_domain,
         chat_type=chat_type,
         group_reply_to=reply_to,
@@ -245,6 +252,7 @@ def process_message(
             text,
             sender_id=sender_id,
             progress_cb=progress_cb,
+            permission_cb=permission_cb,
             force_user_domain=fallback_domain,
             chat_type=chat_type,
             group_reply_to=reply_to,
@@ -320,6 +328,7 @@ def process_message(
                     text,
                     sender_id=sender_id,
                     progress_cb=progress_cb,
+                    permission_cb=permission_cb,
                     force_user_domain=runtime_user_domain,
                     chat_type=chat_type,
                     group_history_context=history_context,
@@ -339,6 +348,7 @@ def process_message(
                     text,
                     sender_id=sender_id,
                     progress_cb=progress_cb,
+                    permission_cb=permission_cb,
                     force_user_domain=runtime_user_domain,
                     chat_type=chat_type,
                     group_history_context=history_context,

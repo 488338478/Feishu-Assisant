@@ -12,6 +12,16 @@ from assistant.agent import runtime
 
 
 class RuntimeAuthPromptTests(unittest.TestCase):
+    def test_prompt_defaults_to_concise_chat_and_makes_markdown_conditional(self):
+        with patch.object(runtime.memory, "format_context", return_value=""):
+            prompt = runtime._build_prompt(
+                "帮我看看这个 bug", "sender", "edit", "dev"
+            )
+
+        self.assertIn("简洁、自然的中文聊天回复", prompt)
+        self.assertIn("不要把普通问答、进度说明或简单操作结果写成完整 Markdown 文档", prompt)
+        self.assertIn("只有用户明确要求创建/更新文档、报告、方案或评审", prompt)
+
     def test_forced_user_domain_is_trusted_runtime_context(self):
         with patch.object(runtime.memory, "format_context", return_value=""):
             prompt = runtime._build_prompt(

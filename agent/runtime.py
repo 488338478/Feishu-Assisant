@@ -8,7 +8,10 @@
 """
 import json
 import os
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 
@@ -20,6 +23,7 @@ from ..config import (
     CONTEXT_COMPACTION_THRESHOLD_CHARS,
 )
 from ..core.memory import memory
+from .permission import decision_from_text, is_admin, session_allow_pattern
 
 # ═══════════════════════════════════════════════════════════════════════
 # profile 与 tier
@@ -70,6 +74,18 @@ _DEV_WRITE_WORDS = (
 )
 _DOCUMENT_WORDS = ("飞书文档", "云文档", "知识库", "wiki")
 
+_pending_permissions: dict[str, dict] = {}
+_permission_lock = threading.Lock()
+_session_permission_grants: dict[str, set[str]] = {}
+
+_RESPONSE_STYLE_GUIDANCE = (
+    "[可信运行时回复风格]\n"
+    "默认使用简洁、自然的中文聊天回复，像同事之间沟通；先说结论，通常控制在 1–3 段。\n"
+    "不要把普通问答、进度说明或简单操作结果写成完整 Markdown 文档；不要主动添加标题、目录、长列表、表格或总结章节。\n"
+    "只有用户明确要求创建/更新文档、报告、方案或评审，或需要展示代码、命令、路径时，才使用必要的 Markdown 结构；用户要求做文档时再按 profile 规则完整编排。\n"
+    "不要为了格式而重复用户的问题、执行过程或背景。"
+)
+
 
 def _requires_dev_write(text: str) -> bool:
     lowered = text.lower()
@@ -106,6 +122,7 @@ _DEFAULT_RUNTIME_CONFIG = {
     "user_profiles": {},   # open_id → profile 名（优先级高于 chat_profiles）
     "default_tier": "read",
     "user_tiers": {},      # open_id → tier
+    "admin_users": [],      # open_id → can approve tool permissions in Feishu
 }
 
 def _load_runtime_config() -> dict:
@@ -143,6 +160,56 @@ def describe_access(chat_id: str, sender_id: str) -> str:
             f"- 当前群模式：**{profile}**\n"
             f"- 你的层级：**{tier}** — {TIER_DESC[tier]}\n"
             "- 调整方式：管理员编辑数据目录下的 runtime_config.json（即时生效）")
+
+
+def permission_decision(text: str) -> str | None:
+    """Return a deterministic approval command, if the message is one."""
+    return decision_from_text(text)
+
+
+def permission_prompt_message(request: dict) -> str:
+    tool = request.get("tool_name", "未知工具")
+    tool_input = json.dumps(request.get("tool_input") or {}, ensure_ascii=False)
+    if len(tool_input) > 1200:
+        tool_input = tool_input[:1200] + "…"
+    return (
+        "Claude 请求调用尚未预先授权的工具：\n"
+        f"工具：{tool}\n参数：{tool_input}\n\n"
+        "仅管理员可确认。请回复：允许一次 / 允许本次会话 / 拒绝"
+    )
+
+
+def _permission_scope(chat_id: str, sender_id: str, chat_type: str) -> str:
+    return conversation_key(chat_id, sender_id, chat_type, resolve_profile(chat_id, sender_id))
+
+
+def approve_permission(chat_id: str, sender_id: str, chat_type: str, decision: str) -> str:
+    cfg = _load_runtime_config()
+    if not is_admin(sender_id, cfg.get("admin_users", [])):
+        return "你没有权限确认工具调用。"
+    with _permission_lock:
+        candidates = [
+            item for item in _pending_permissions.values()
+            if item["request"].get("chat_id") == chat_id and not item.get("resolved")
+        ]
+        if not candidates:
+            return "当前没有等待确认的工具权限请求。"
+        item = max(candidates, key=lambda value: value["request"].get("created_at", 0))
+        item["resolved"] = True
+    request = item["request"]
+    response = {
+        "decision": "allow" if decision in {"once", "session"} else "deny",
+        "message": "已由飞书管理员确认。" if decision in {"once", "session"}
+                   else "飞书管理员拒绝了这次工具调用。",
+    }
+    response_path = Path(item["directory"]) / f"response-{request['token']}.json"
+    response_path.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+    if decision == "session":
+        scope = _permission_scope(chat_id, request.get("sender_id", ""), chat_type)
+        pattern = session_allow_pattern(request.get("tool_name", ""), request.get("tool_input") or {})
+        with _permission_lock:
+            _session_permission_grants.setdefault(scope, set()).add(pattern)
+    return "已允许本次工具调用。" if decision in {"once", "session"} else "已拒绝本次工具调用。"
 
 # ═══════════════════════════════════════════════════════════════════════
 # 会话持久化（业务上下文按群共享，CLI resume 链再按 profile 隔离）
@@ -413,7 +480,9 @@ def _tool_brief(name: str, inp: dict) -> str:
 def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                 extra_deny: list[str], timeout: int,
                 model: str = DEFAULT_MODEL,
-                progress_cb=None) -> tuple[str, str | None, int]:
+                progress_cb=None, permission_cb=None,
+                allowed_tools: list[str] | None = None,
+                permission_context: dict | None = None) -> tuple[str, str | None, int]:
     """返回 (结果文本, session_id, 工具调用次数)。超时抛 TimeoutError。"""
     model = model if model in MODEL_LABELS else DEFAULT_MODEL
     cmd = [CLAUDE_EXE, "-p", prompt, "--model", model,
@@ -422,11 +491,33 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
         cmd += ["--resume", session_id]
     if extra_deny:
         cmd += ["--disallowedTools"] + extra_deny
+    if allowed_tools:
+        cmd += ["--allowedTools"] + allowed_tools
+
+    permission_dir = Path(tempfile.mkdtemp(prefix="assistant-permission-"))
+    mcp_config = permission_dir / "mcp.json"
+    mcp_config.write_text(json.dumps({
+        "mcpServers": {
+            "feishu_permission": {
+                "command": sys.executable,
+                "args": [str(Path(__file__).with_name("permission_mcp.py"))],
+            }
+        }
+    }, ensure_ascii=False), encoding="utf-8")
+    cmd += ["--mcp-config", str(mcp_config),
+            "--permission-prompt-tool", "mcp__feishu_permission__prompt"]
 
     child_env = os.environ.copy()
     # The wrapper asks the user before compaction, so prevent Claude Code's
     # own unattended auto-compact from racing this confirmation flow.
     child_env["DISABLE_AUTO_COMPACT"] = "true"
+    child_env["ASSISTANT_PERMISSION_DIR"] = str(permission_dir)
+    context = permission_context or {}
+    child_env["ASSISTANT_PERMISSION_CHAT_ID"] = str(context.get("chat_id", ""))
+    child_env["ASSISTANT_PERMISSION_SENDER_ID"] = str(context.get("sender_id", ""))
+    child_env["ASSISTANT_PERMISSION_PROFILE"] = str(context.get("profile", ""))
+    child_env["ASSISTANT_PERMISSION_TIER"] = str(context.get("tier", ""))
+    child_env["ASSISTANT_PERMISSION_CHAT_TYPE"] = str(context.get("chat_type", "p2p"))
     # 不改变认证或 API 地址；覆盖模型别名及子任务，避免继承昂贵模型。
     for key in set(child_env) | {"ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
                                 "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -436,6 +527,36 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
             child_env[key] = model
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", cwd=str(cwd), bufsize=1, env=child_env)
+    permission_stop = threading.Event()
+
+    def poll_permissions():
+        seen = set()
+        while not permission_stop.is_set():
+            for path in permission_dir.glob("request-*.json"):
+                if path.name in seen:
+                    continue
+                try:
+                    request = json.loads(path.read_text(encoding="utf-8"))
+                    token = request.get("token")
+                    if not token:
+                        continue
+                    request["directory"] = str(permission_dir)
+                    with _permission_lock:
+                        _pending_permissions[token] = {"request": request, "directory": str(permission_dir)}
+                    seen.add(path.name)
+                    if permission_cb:
+                        permission_cb(request)
+                    else:
+                        (permission_dir / f"response-{token}.json").write_text(
+                            json.dumps({"decision": "deny", "message": "未配置飞书权限确认回调。"}, ensure_ascii=False),
+                            encoding="utf-8",
+                        )
+                except (OSError, ValueError, json.JSONDecodeError):
+                    pass
+            permission_stop.wait(0.2)
+
+    permission_thread = threading.Thread(target=poll_permissions, daemon=True)
+    permission_thread.start()
     killed = {"v": False}
     def _kill():
         killed["v"] = True
@@ -475,6 +596,13 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
         proc.wait()
     finally:
         watchdog.cancel()
+        permission_stop.set()
+        permission_thread.join(timeout=1)
+        with _permission_lock:
+            for token, item in list(_pending_permissions.items()):
+                if Path(item.get("directory", "")) == permission_dir:
+                    _pending_permissions.pop(token, None)
+        shutil.rmtree(permission_dir, ignore_errors=True)
 
     if killed["v"]:
         raise TimeoutError(f"claude 超时 ({timeout}s)")
@@ -496,6 +624,7 @@ def _build_prompt(text: str, sender_id: str, tier: str, profile: str,
     """消息前缀：动态用户信息 + 语义记忆召回（静态人设/规则在 profile 的 CLAUDE.md）。"""
     parts = [f"[当前消息发送人] open_id={sender_id or '未知'} | profile={profile} | "
              f"权限层级={tier}（{TIER_DESC[tier]}）"]
+    parts.append(_RESPONSE_STYLE_GUIDANCE)
     if force_user_domain:
         parts.append(
             "[可信运行时状态] 飞书用户授权已完成；本次操作必须使用 "
@@ -544,6 +673,7 @@ def _build_prompt(text: str, sender_id: str, tier: str, profile: str,
 
 def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None,
         progress_cb=None, force_user_domain: str | None = None,
+        permission_cb=None,
         chat_type: str = "p2p", group_history_context: str | None = None,
         group_reply_to: str = "", group_thread_id: str = "",
         group_history_exhausted: bool = False,
@@ -580,6 +710,8 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
     scope_key = session_key(chat_id, sender_id, chat_type)
     conversation_scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
+    with _permission_lock:
+        allowed_tools = sorted(_session_permission_grants.get(conversation_scope_key, set()))
     prompt = _build_prompt(text, sender_id, tier, profile,
                             force_user_domain=force_user_domain,
                             memory_scope=scope_key,
@@ -620,7 +752,14 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
             try:
                 result, new_sid, tools = _run_claude(prompt, session_id, cwd, deny, timeout,
                                                      model=model,
-                                                     progress_cb=progress_cb)
+                                                     progress_cb=progress_cb,
+                                                     permission_cb=permission_cb,
+                                                     allowed_tools=allowed_tools,
+                                                     permission_context={
+                                                         "chat_id": chat_id, "sender_id": sender_id,
+                                                         "profile": profile, "tier": tier,
+                                                         "chat_type": chat_type,
+                                                     })
             except Exception as e:
                 if not session_id or not _is_missing_session_error(e):
                     raise
@@ -628,7 +767,12 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 session_recovered = True
                 print(f"[RUNTIME] stale session={session_id[:8]} profile={profile}; retrying", flush=True)
                 result, new_sid, retry_tools = _run_claude(
-                    prompt, None, cwd, deny, timeout, model=model, progress_cb=progress_cb)
+                    prompt, None, cwd, deny, timeout, model=model, progress_cb=progress_cb,
+                    permission_cb=permission_cb, allowed_tools=allowed_tools,
+                    permission_context={
+                        "chat_id": chat_id, "sender_id": sender_id,
+                        "profile": profile, "tier": tier, "chat_type": chat_type,
+                    })
                 tools += retry_tools
             if new_sid:
                 _add_to_history(conversation_scope_key, new_sid)
