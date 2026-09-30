@@ -128,6 +128,8 @@ Claude 的认证由 Claude CLI 自身处理。Python 不要求 `ANTHROPIC_API_KE
 
 `admin_users` 是可以在飞书内确认临时 Claude 工具权限的最高权限成员列表。遇到未预先授权的工具时，助手会发送工具名和参数；管理员回复「允许一次」「允许本次会话」或「拒绝」即可处理。授权默认 5 分钟过期，永久 deny、sudo、删除和权限管理操作不能被飞书确认绕过。
 
+管理员用户同时会进入 `admin` 运行模式：该用户从飞书发起的请求会跳过 Claude 的工具权限确认，等效于 Claude 的 bypass 权限模式。它不提升 Linux 服务账号、systemd 或 Perforce 服务端权限，也不适用于直接 SSH 启动的其他 Claude 会话。只有 `admin_users` 中的精确 open_id 才能进入该模式。
+
 该文件每次 runtime 调用重新读取，无需重启。普通 Agent 请求的审计记录有 chat_id 和 sender；「我的权限」「查看配置」等快捷命令不会进入 runtime 审计。
 
 | 模式 | 工作位置 | 准备事项 |

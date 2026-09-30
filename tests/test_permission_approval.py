@@ -68,6 +68,11 @@ class PermissionApprovalTests(unittest.TestCase):
             response = json.loads((Path(directory) / "response-abc.json").read_text(encoding="utf-8"))
             self.assertEqual(response["decision"], "allow")
 
+    def test_admin_user_gets_explicit_bypass_mode_and_members_do_not(self):
+        with patch.object(runtime, "_load_runtime_config", return_value={"admin_users": ["ou_admin"]}):
+            self.assertEqual(runtime.permission_mode("ou_admin"), ("admin", [], True))
+            self.assertEqual(runtime.permission_mode("ou_member"), ("read", runtime.TIER_DENY["read"], False))
+
 
 if __name__ == "__main__":
     unittest.main()

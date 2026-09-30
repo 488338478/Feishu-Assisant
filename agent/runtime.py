@@ -60,12 +60,14 @@ TIER_DENY = {
              "Bash(p4 submit:*)", "Bash(p4 sync:*)"] + _P4_DANGER,
     "edit": ["Bash(p4 submit:*)", "Bash(p4 sync:*)"] + _P4_DANGER,
     "submit": list(_P4_DANGER),
+    "admin": [],
 }
 
 TIER_DESC = {
     "read": "只读：仓库分析/查日志/review 意见 + 飞书文档操作，不能改动任何文件",
     "edit": "改动：可在工作区修改代码（p4 edit/add），提交由人执行",
     "submit": "提交：可 p4 sync/submit，changelist 描述带飞书用户归因",
+    "admin": "管理员：跳过 Claude 工具权限确认；仍受操作系统、网络和服务账号限制",
 }
 
 _DEV_WRITE_WORDS = (
@@ -149,8 +151,17 @@ def resolve_profile(chat_id: str, sender_id: str = "") -> str:
 
 def resolve_tier(sender_id: str) -> str:
     cfg = _load_runtime_config()
-    tier = cfg["user_tiers"].get(sender_id, cfg["default_tier"])
+    if is_admin(sender_id, cfg.get("admin_users", [])):
+        return "admin"
+    tier = cfg.get("user_tiers", {}).get(sender_id, cfg.get("default_tier", "read"))
     return tier if tier in TIER_DENY else "read"
+
+
+def permission_mode(sender_id: str) -> tuple[str, list[str], bool]:
+    """Resolve the effective tier, deny list, and Claude bypass flag."""
+    tier = resolve_tier(sender_id)
+    bypass = tier == "admin"
+    return tier, ([] if bypass else TIER_DENY.get(tier, TIER_DENY["read"])), bypass
 
 def describe_access(chat_id: str, sender_id: str) -> str:
     """「我的权限」命令。"""
@@ -482,7 +493,8 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                 model: str = DEFAULT_MODEL,
                 progress_cb=None, permission_cb=None,
                 allowed_tools: list[str] | None = None,
-                permission_context: dict | None = None) -> tuple[str, str | None, int]:
+                permission_context: dict | None = None,
+                bypass_permissions: bool = False) -> tuple[str, str | None, int]:
     """返回 (结果文本, session_id, 工具调用次数)。超时抛 TimeoutError。"""
     model = model if model in MODEL_LABELS else DEFAULT_MODEL
     cmd = [CLAUDE_EXE, "-p", prompt, "--model", model,
@@ -493,6 +505,8 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
         cmd += ["--disallowedTools"] + extra_deny
     if allowed_tools:
         cmd += ["--allowedTools"] + allowed_tools
+    if bypass_permissions:
+        cmd += ["--dangerously-skip-permissions"]
 
     permission_dir = Path(tempfile.mkdtemp(prefix="assistant-permission-"))
     mcp_config = permission_dir / "mcp.json"
@@ -684,7 +698,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
     progress_cb(brief, n) 在每次工具调用时回调（可为 None）。
     """
     profile = profile or resolve_profile(chat_id, sender_id)
-    tier = resolve_tier(sender_id)
+    tier, deny, bypass_permissions = permission_mode(sender_id)
     model = resolve_model(chat_id, chat_type)
     cwd = _profile_cwd(profile)
     if cwd is None or not cwd.exists():
@@ -698,7 +712,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
         return unavailable, \
                {"ok": False, "tools": 0, "duration": 0.0, "err": "profile_unavailable"}
 
-    if profile == "dev" and tier in {"edit", "submit"} and _requires_dev_write(text):
+    if profile == "dev" and tier in {"edit", "submit", "admin"} and _requires_dev_write(text):
         write_issue = _workspace_write_issue(cwd)
         if write_issue:
             return (
@@ -706,7 +720,6 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 "的 `ReadWritePaths` 包含实际 `P4_WORKSPACE`，并确认 agent 用户可写该目录。"
             ), {"ok": False, "tools": 0, "duration": 0.0, "err": "workspace_readonly"}
 
-    deny = TIER_DENY.get(tier, TIER_DENY["read"])
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
     scope_key = session_key(chat_id, sender_id, chat_type)
     conversation_scope_key = conversation_key(chat_id, sender_id, chat_type, profile)
@@ -755,6 +768,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                                                      progress_cb=progress_cb,
                                                      permission_cb=permission_cb,
                                                      allowed_tools=allowed_tools,
+                                                     bypass_permissions=bypass_permissions,
                                                      permission_context={
                                                          "chat_id": chat_id, "sender_id": sender_id,
                                                          "profile": profile, "tier": tier,
@@ -769,6 +783,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 result, new_sid, retry_tools = _run_claude(
                     prompt, None, cwd, deny, timeout, model=model, progress_cb=progress_cb,
                     permission_cb=permission_cb, allowed_tools=allowed_tools,
+                    bypass_permissions=bypass_permissions,
                     permission_context={
                         "chat_id": chat_id, "sender_id": sender_id,
                         "profile": profile, "tier": tier, "chat_type": chat_type,
