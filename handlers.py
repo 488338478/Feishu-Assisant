@@ -8,7 +8,7 @@ from lark_oapi.api.im.v1 import *
 
 from .feishu.client import (
     build_client, send_message, add_reaction, delete_reaction, reply_to_comment,
-    send_progress_message, update_message,
+    send_progress_message, update_message, should_render_rich_reply,
 )
 from .agent import runtime
 from .config import LARK_CLI_PROFILE, BOT_IDS
@@ -439,7 +439,7 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
                 getattr(msg, "root_id", "") or "",
             )
             delete_reaction(client, message_id, rid)
-            send_message(client, chat_id, result)
+            send_message(client, chat_id, result, rich=should_render_rich_reply(text))
         except Exception as e:
             print(f"[ERROR] {e}", flush=True)
             delete_reaction(client, message_id, rid)

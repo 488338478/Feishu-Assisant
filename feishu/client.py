@@ -130,13 +130,44 @@ def _parse_inline_markdown(text: str) -> list:
             elements.append({"tag": "text", "text": part})
     return elements
 
-def send_message(client, chat_id: str, text: str) -> None:
+def should_render_rich_reply(user_text: str) -> bool:
+    """Rich post output is opt-in for explicit document/report requests."""
+    normalized = "".join(str(user_text).lower().split())
+    if any(word in normalized for word in ("markdown", "md文档", "markdown文档")):
+        return True
+    document_action = ("创建", "新建", "写一份", "整理成", "生成", "更新", "导出")
+    document_target = ("文档", "报告", "周报", "方案", "设计稿", "说明书")
+    return any(action in normalized for action in document_action) and any(
+        target in normalized for target in document_target
+    )
+
+
+def plain_chat_text(text: str) -> str:
+    """Remove presentation-only Markdown from a normal chat reply."""
+    value = str(text).strip()
+    value = re.sub(r"^#{1,6}\s+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^[-*+]\s+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^```(?:[A-Za-z0-9_+-]+)?\s*$", "", value, flags=re.MULTILINE)
+    value = re.sub(r"\*\*(.+?)\*\*", r"\1", value)
+    value = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", value)
+    value = re.sub(r"`([^`]+)`", r"\1", value)
+    value = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1（\2）", value)
+    value = re.sub(r"^\s*[-*_]{3,}\s*$", "", value, flags=re.MULTILINE)
+    return value.strip()
+
+
+def send_message(client, chat_id: str, text: str, rich: bool | None = None) -> None:
     text = text.strip()
+    if rich is False:
+        send_message_text(client, chat_id, plain_chat_text(text))
+        return
     if len(text) > 5000:
         send_message_text(client, chat_id, text)
         return
+    if rich is None:
+        rich = True
     try:
-        if re.search(r'\*\*|`|^#{1,3}\s|^[-*]\s', text, re.MULTILINE):
+        if rich and re.search(r'\*\*|`|^#{1,3}\s|^[-*]\s', text, re.MULTILINE):
             post = _build_post_content(text)
             req = CreateMessageRequest.builder() \
                 .receive_id_type("chat_id") \

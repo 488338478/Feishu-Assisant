@@ -14,6 +14,16 @@ from assistant.feishu import client
 
 
 class RunLarkCliTests(unittest.TestCase):
+    def test_plain_chat_strips_markdown_markers(self):
+        self.assertEqual(
+            client.plain_chat_text("## 结论\n\n- **已经完成**\n- `p4 info` 正常"),
+            "结论\n\n已经完成\np4 info 正常",
+        )
+
+    def test_rich_output_is_opt_in_for_document_requests(self):
+        self.assertFalse(client.should_render_rich_reply("帮我看看这个 bug"))
+        self.assertTrue(client.should_render_rich_reply("把结果整理成一份 Markdown 报告"))
+
     def test_user_commands_set_identity_explicitly(self):
         completed = subprocess.CompletedProcess(
             [], 0, json.dumps({"ok": True, "identity": "user"}), ""
