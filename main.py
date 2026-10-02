@@ -15,7 +15,9 @@ if __package__ is None:
 import threading
 import lark_oapi as lark
 
-from .config import APP_ID, APP_SECRET
+from .config import APP_ID, APP_SECRET, MEDIA_ROOT, MEDIA_MAX_AGE_SECONDS, IMAGE_PENDING_ROOT
+from .feishu.media import cleanup_media
+from .feishu.doc_images import cleanup_pending
 from .feishu.client import build_client, fetch_bot_open_id, send_message
 from .feishu.lark_profile import sync_lark_profile
 from .core.memory import memory
@@ -23,6 +25,8 @@ from .core.scheduler import scheduler
 from .handlers import on_message, on_message_recalled, on_doc_comment, set_bot_open_id
 
 def main():
+    cleanup_media(MEDIA_ROOT, MEDIA_MAX_AGE_SECONDS)
+    cleanup_pending(IMAGE_PENDING_ROOT)
     if not APP_ID or not APP_SECRET:
         print("[FATAL] 缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量，见 deploy/env.example", flush=True)
         sys.exit(1)
@@ -66,8 +70,19 @@ def main():
 
     ws_client = lark.ws.Client(APP_ID, APP_SECRET, event_handler=handler)
     print("[READY] 助手已就绪", flush=True)
+    cleanup_stop = threading.Event()
+    def clean_images():
+        while not cleanup_stop.wait(600):
+            try:
+                cleanup_media(MEDIA_ROOT, MEDIA_MAX_AGE_SECONDS)
+                cleanup_pending(IMAGE_PENDING_ROOT)
+            except OSError as error:
+                print(f'[MEDIA] cleanup error: {error}', flush=True)
+    threading.Thread(target=clean_images, daemon=True).start()
     try: ws_client.start()
-    finally: scheduler.stop()
+    finally:
+        cleanup_stop.set()
+        scheduler.stop()
 
 if __name__ == "__main__":
     main()

@@ -118,7 +118,9 @@ class StartupOrderTests(unittest.TestCase):
                 self.target = target
 
             def start(self):
-                self.target()
+                # Exercise scheduler ordering; periodic maintenance is a background loop.
+                if self.target == fake_scheduler.start:
+                    self.target()
 
         class FakeHandlerBuilder:
             def __getattr__(self, name):

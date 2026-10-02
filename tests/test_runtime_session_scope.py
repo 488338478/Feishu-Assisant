@@ -96,4 +96,41 @@ class SessionScopeTests(unittest.TestCase):
         self.assertEqual(run_claude.call_count, 1)
         self.assertEqual(runtime.sessions[conversation_key]['active'], 'stale')
 
+    def test_group_sender_does_not_resume_previous_senders_image_history(self):
+        key = runtime.conversation_key('group', 'user-b', 'group', 'docs')
+        runtime.sessions[key] = {'active': 'image-session-a', 'history': [], 'image_owner': 'user-a'}
+        with patch.object(runtime, '_profile_cwd', return_value=Path(self.tmp.name)), \
+             patch.object(runtime, 'resolve_profile', return_value='docs'), \
+             patch.object(runtime, 'resolve_tier', return_value='read'), \
+             patch.object(runtime, '_audit'), \
+             patch.object(runtime, '_run_claude', return_value=('回答', 'new-b', 0)) as cli:
+            runtime.run('group', '继续', sender_id='user-b', chat_type='group')
+        self.assertIsNone(cli.call_args.args[1])
+
+    def test_document_image_tool_marks_shared_history_as_owned_by_sender(self):
+        def cli(*args, **kwargs):
+            kwargs['progress_cb']('mcp__assistant_image__read_document_image', 1)
+            return '描述', 'image-session-a', 1
+        with patch.object(runtime, '_profile_cwd', return_value=Path(self.tmp.name)), \
+             patch.object(runtime, 'resolve_profile', return_value='docs'), \
+             patch.object(runtime, 'resolve_tier', return_value='read'), \
+             patch.object(runtime, '_audit'), patch.object(runtime, '_run_claude', side_effect=cli):
+            runtime.run('group', '看看文档配图', sender_id='user-a', chat_type='group')
+        key = runtime.conversation_key('group', 'user-a', 'group', 'docs')
+        self.assertEqual(runtime.sessions[key]['image_owner'], 'user-a')
+
+    def test_image_history_is_isolated_even_when_gateway_fails_after_tool_read(self):
+        key = runtime.conversation_key('group', 'user-a', 'group', 'docs')
+        runtime.sessions[key] = {'active': 'text-session', 'history': []}
+        def cli(*args, **kwargs):
+            kwargs['progress_cb']('mcp__assistant_image__read_document_image', 1)
+            raise RuntimeError('gateway unavailable after image read')
+        with patch.object(runtime, '_profile_cwd', return_value=Path(self.tmp.name)), \
+             patch.object(runtime, 'resolve_profile', return_value='docs'), \
+             patch.object(runtime, 'resolve_tier', return_value='read'), \
+             patch.object(runtime, '_audit'), patch.object(runtime, '_run_claude', side_effect=cli):
+            _, stats = runtime.run('group', '看看文档配图', sender_id='user-a', chat_type='group')
+        self.assertFalse(stats['ok'])
+        self.assertEqual(runtime.sessions[key].get('image_owner'), 'user-a')
+
 if __name__=='__main__': unittest.main()

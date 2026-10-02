@@ -23,6 +23,8 @@
 
 当前主要能力：
 
+- 图片：私聊直接发送原图；群聊在带图富文本中 @机器人，或引用图片消息后 @机器人。支持识图、查看飞书云文档图片、指定位置插入，以及发起人确认后删除图片块。
+
 - profile 按 `user_profiles` → `chat_profiles` → `default_profile` 解析，read/edit/submit tier 再独立收窄工具权限。
 - 支持在飞书发送「切换模型 DeepSeek 4.1」「切换模型 DeepSeek 4.0 Pro」；模糊切换意图会返回明确指令。
 - 同群共享群聊记录和业务记忆，Claude resume 链按 profile 隔离；失效 session 会自动清除并重试一次。

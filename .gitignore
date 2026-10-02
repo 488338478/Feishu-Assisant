@@ -31,3 +31,4 @@ Thumbs.db
 
 # 隔离开发工作区
 .worktrees/
+.superpowers/

@@ -11,7 +11,11 @@ from .feishu.client import (
     send_progress_message, update_message, should_render_rich_reply,
 )
 from .agent import runtime
-from .config import LARK_CLI_PROFILE, BOT_IDS
+from .config import (LARK_CLI_PROFILE, BOT_IDS, MEDIA_ROOT, IMAGE_PENDING_ROOT,
+                     MEDIA_MAX_BYTES, MEDIA_MAX_AGE_SECONDS)
+from .feishu.media import (MediaStore, parse_message, download_message_image,
+                           quoted_images, cleanup_media)
+from .feishu.doc_images import DocImageService
 from .feishu.comment_service import dispatch_doc_comment
 from .core.memory import memory
 from .core.group_history import (
@@ -31,6 +35,10 @@ from .feishu.group_history_protocol import parse_history_request
 
 auth_manager = LarkAuthManager(LARK_CLI_PROFILE)
 BOT_OPEN_ID = ""
+
+
+def make_media_store(chat_id: str, sender_id: str) -> MediaStore:
+    return MediaStore(MEDIA_ROOT, chat_id, sender_id, MEDIA_MAX_BYTES, MEDIA_MAX_AGE_SECONDS)
 
 _SESSION_CONTROL_COMMANDS = {"清除上下文", "清除会话", "重置会话", "新建会话", "切换会话"}
 _SESSION_CONTROL_INTENTS = (
@@ -140,8 +148,20 @@ def process_message(
     text: str, chat_id: str, sender_id: str, client,
     message_id: str = "", chat_type: str = "p2p",
     reply_to: str = "", thread_id: str = "",
+    image_refs: list[str] | None = None,
 ) -> str:
     normalized_text = "".join(text.lower().split())
+    image_confirmation = re.fullmatch(r'(确认|取消)删除图片\s+([a-f0-9]{32})', text.strip())
+    if image_confirmation:
+        try:
+            result = DocImageService(make_media_store(chat_id, sender_id), IMAGE_PENDING_ROOT).confirm_delete(
+                image_confirmation.group(2), cancel=image_confirmation.group(1) == '取消')
+            runtime.audit_event(dict(event='document_image_confirmation', chat_id=chat_id,
+                                     sender=sender_id, **result))
+            return '已取消删除图片。' if result.get('cancelled') else '已删除指定图片，并回读确认。'
+        except Exception as error:
+            return str(error)[:500]
+    image_kwargs = {'image_refs': image_refs} if image_refs is not None else {}
     requested_permission = runtime.permission_decision(text)
     if requested_permission in {"once", "session", "deny"}:
         return runtime.approve_permission(chat_id, sender_id, chat_type, requested_permission)
@@ -235,6 +255,7 @@ def process_message(
         chat_type=chat_type,
         group_reply_to=reply_to,
         group_thread_id=thread_id,
+        **image_kwargs,
     )
 
     # bot-first 调用若确认必须使用 user，由 Python 统一授权并只重试一次。
@@ -257,6 +278,7 @@ def process_message(
             chat_type=chat_type,
             group_reply_to=reply_to,
             group_thread_id=thread_id,
+            **image_kwargs,
         )
         if auth_required_domain(retry_response):
             response = (
@@ -334,6 +356,7 @@ def process_message(
                     group_history_context=history_context,
                     group_reply_to=reply_to,
                     group_thread_id=thread_id,
+                    **image_kwargs,
                 )
                 stats = {
                     **retry_stats,
@@ -355,6 +378,7 @@ def process_message(
                     group_reply_to=reply_to,
                     group_thread_id=thread_id,
                     group_history_exhausted=True,
+                    **image_kwargs,
                 )
                 stats = {
                     **final_stats,
@@ -386,10 +410,10 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     chat_id, message_id = msg.chat_id, msg.message_id
     try: content = json.loads(msg.content)
     except Exception: return
-    raw_text = content.get("text", "")
+    content_type = getattr(msg, "message_type", "text") or "text"
+    raw_text, image_keys = parse_message(content_type, content)
     if not isinstance(raw_text, str):
         raw_text = ""
-    content_type = getattr(msg, "message_type", "text") or "text"
     captured_content = raw_text if content_type == "text" else msg.content
 
     # 提问人身份（三层权限按此解析）
@@ -422,21 +446,44 @@ def on_message(data: P2ImMessageReceiveV1) -> None:
     if not message_targets_bot(msg.chat_type, msg.mentions, BOT_OPEN_ID):
         return
 
-    if not raw_text:
+    if not raw_text and not image_keys:
         return
 
     print(f"[MSG] received", flush=True)
     text = strip_bot_mention(raw_text, msg.mentions, BOT_OPEN_ID)
+    if not text and image_keys:
+        text = '请识别这张图片，简洁说明主要内容。'
     if not text: return
 
     client = build_client()
     def run():
         rid = add_reaction(client, message_id, "THINKING")
         try:
+            store = make_media_store(chat_id, sender_id)
+            cleanup_media(MEDIA_ROOT, MEDIA_MAX_AGE_SECONDS)
+            attachments = [download_message_image(client, message_id, key, store) for key in image_keys]
+            parent = getattr(msg, 'parent_id', '') or ''
+            is_image_confirmation = re.fullmatch(r'(确认|取消)删除图片\s+[a-f0-9]{32}', text.strip())
+            if parent and not attachments and not is_image_confirmation:
+                # Quote images from the current chat only, after the same mention gate.
+                try:
+                    quote_keys = quoted_images(client, parent, chat_id)
+                except Exception:
+                    if any(word in text for word in ('图片', '截图', '这张图', '照片')):
+                        raise
+                    quote_keys = []
+                for key in quote_keys:
+                    attachments.append(download_message_image(client, parent, key, store))
+            media_kwargs = {'image_refs': [item['ref'] for item in attachments]} if attachments else {}
+            for item in attachments:
+                runtime.audit_event(dict(event='image_received', chat_id=chat_id, sender=sender_id,
+                                         ref=item['ref'], source=item['source'], size=item['size'],
+                                         mime_type=item['mime_type'], message_id=item['message_id']))
             result = process_message(
                 text, chat_id, sender_id, client, message_id, msg.chat_type,
                 getattr(msg, "parent_id", "") or "",
                 getattr(msg, "root_id", "") or "",
+                **media_kwargs,
             )
             delete_reaction(client, message_id, rid)
             send_message(client, chat_id, result, rich=should_render_rich_reply(text))

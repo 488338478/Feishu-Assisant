@@ -35,6 +35,10 @@ MODEL_PREFERENCES_FILE = BASE_DIR / "model_preferences.json"
 AUDIT_LOG_FILE = BASE_DIR / "audit_log.jsonl"
 GROUP_HISTORY_DB_FILE = BASE_DIR / "group_history.sqlite3"
 GROUP_HISTORY_CONFIG_FILE = BASE_DIR / "group_history_config.json"
+MEDIA_ROOT = BASE_DIR / "media" / "inbox"
+IMAGE_PENDING_ROOT = BASE_DIR / "media" / "pending-delete"
+MEDIA_MAX_BYTES = int(os.environ.get("ASSISTANT_MEDIA_MAX_BYTES", "20971520"))
+MEDIA_MAX_AGE_SECONDS = int(os.environ.get("ASSISTANT_MEDIA_MAX_AGE_SECONDS", "86400"))
 
 # Agent profile 目录与各 profile 工作目录
 PROFILES_DIR = Path(os.environ.get("ASSISTANT_PROFILES_DIR", str(PACKAGE_DIR / "profiles")))
