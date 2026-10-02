@@ -21,6 +21,15 @@ def decision_from_text(text: str) -> str | None:
     return _DECISIONS.get("".join(str(text).lower().split()))
 
 
+def question_answer_from_text(text: str) -> str | None:
+    """Parse an explicit answer intended for a pending AskUserQuestion call."""
+    match = re.fullmatch(r"\s*回答\s*[:：]\s*(.*?)\s*", str(text), flags=re.DOTALL)
+    if not match:
+        return None
+    answer = match.group(1).strip()
+    return answer or None
+
+
 def is_admin(sender_id: str, admin_ids: Iterable[str]) -> bool:
     return bool(sender_id) and sender_id in {item for item in admin_ids if item}
 

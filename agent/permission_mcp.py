@@ -18,13 +18,38 @@ def _reply(request_id, result=None, error=None):
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-def _permission_result(decision: str, message: str = "") -> dict:
-    if decision == "allow":
-        return {"behavior": "allow"}
-    return {"behavior": "deny", "message": message or "飞书管理员拒绝了这次工具调用。"}
+def _permission_result(response: dict) -> dict:
+    if response.get("decision") == "allow":
+        result = {"behavior": "allow"}
+        if isinstance(response.get("updated_input"), dict):
+            result["updatedInput"] = response["updated_input"]
+        return result
+    return {
+        "behavior": "deny",
+        "message": response.get("message") or "飞书管理员拒绝了这次工具调用。",
+    }
+
+
+def _valid_question_input(tool_input: object) -> bool:
+    if not isinstance(tool_input, dict):
+        return False
+    questions = tool_input.get("questions")
+    return bool(
+        isinstance(questions, list)
+        and questions
+        and all(isinstance(item, dict) and str(item.get("question", "")).strip()
+                for item in questions)
+    )
 
 
 def _wait_for_decision(arguments: dict) -> dict:
+    tool_name = str(arguments.get("tool_name", ""))
+    tool_input = arguments.get("tool_input") or {}
+    if tool_name == "AskUserQuestion" and not _valid_question_input(tool_input):
+        return _permission_result({
+            "decision": "deny",
+            "message": "AskUserQuestion 缺少有效的 questions；请直接说明需要的信息，或按合理默认值继续。",
+        })
     directory = Path(os.environ["ASSISTANT_PERMISSION_DIR"])
     directory.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -37,8 +62,8 @@ def _wait_for_decision(arguments: dict) -> dict:
         "profile": os.environ.get("ASSISTANT_PERMISSION_PROFILE", ""),
         "tier": os.environ.get("ASSISTANT_PERMISSION_TIER", ""),
         "chat_type": os.environ.get("ASSISTANT_PERMISSION_CHAT_TYPE", "p2p"),
-        "tool_name": str(arguments.get("tool_name", "")),
-        "tool_input": arguments.get("tool_input") or {},
+        "tool_name": tool_name,
+        "tool_input": tool_input,
         "created_at": time.time(),
     }
     request_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -47,9 +72,9 @@ def _wait_for_decision(arguments: dict) -> dict:
         while time.time() < deadline:
             if response_path.is_file():
                 response = json.loads(response_path.read_text(encoding="utf-8"))
-                return _permission_result(response.get("decision", "deny"), response.get("message", ""))
+                return _permission_result(response)
             time.sleep(0.2)
-        return _permission_result("deny", "飞书权限确认已超时。")
+        return _permission_result({"decision": "deny", "message": "飞书权限确认已超时。"})
     finally:
         for path in (request_path, response_path):
             try:

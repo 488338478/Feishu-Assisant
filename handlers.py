@@ -11,6 +11,7 @@ from .feishu.client import (
     send_progress_message, update_message, should_render_rich_reply,
 )
 from .agent import runtime
+from .agent.permission import question_answer_from_text
 from .config import (LARK_CLI_PROFILE, BOT_IDS, MEDIA_ROOT, IMAGE_PENDING_ROOT,
                      MEDIA_MAX_BYTES, MEDIA_MAX_AGE_SECONDS)
 from .feishu.media import (MediaStore, parse_message, download_message_image,
@@ -151,6 +152,9 @@ def process_message(
     image_refs: list[str] | None = None,
 ) -> str:
     normalized_text = "".join(text.lower().split())
+    answer = question_answer_from_text(text)
+    if answer is not None:
+        return runtime.answer_user_question(chat_id, sender_id, chat_type, answer)
     image_confirmation = re.fullmatch(r'(确认|取消)删除图片\s+([a-f0-9]{32})', text.strip())
     if image_confirmation:
         try:

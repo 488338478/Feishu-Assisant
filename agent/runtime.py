@@ -23,7 +23,11 @@ from ..config import (
     CONTEXT_COMPACTION_THRESHOLD_CHARS, MEDIA_ROOT, MEDIA_MAX_BYTES, MEDIA_MAX_AGE_SECONDS,
 )
 from ..core.memory import memory
-from .permission import decision_from_text, is_admin, session_allow_pattern
+from .permission import (
+    decision_from_text,
+    is_admin,
+    session_allow_pattern,
+)
 from ..feishu.media import MediaStore
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -181,6 +185,27 @@ def permission_decision(text: str) -> str | None:
 
 def permission_prompt_message(request: dict) -> str:
     tool = request.get("tool_name", "未知工具")
+    if tool == "AskUserQuestion":
+        questions = (request.get("tool_input") or {}).get("questions") or []
+        lines = ["Claude 需要你补充信息："]
+        for index, question in enumerate(questions, start=1):
+            header = str(question.get("header", "")).strip()
+            body = str(question.get("question", "")).strip()
+            title = f"{index}. " + (f"【{header}】" if header else "") + body
+            lines.extend(["", title])
+            for option_index, option in enumerate(question.get("options") or [], start=1):
+                label = str(option.get("label", "")).strip()
+                description = str(option.get("description", "")).strip()
+                suffix = f" — {description}" if description else ""
+                lines.append(f"   {option_index}) {label}{suffix}")
+            if question.get("multiSelect"):
+                lines.append("   （可多选）")
+        lines.extend([
+            "",
+            "请在 5 分钟内回复：回答：你的答案",
+            "只有发起这次请求的用户可以回答。",
+        ])
+        return "\n".join(lines)
     tool_input = json.dumps(request.get("tool_input") or {}, ensure_ascii=False)
     if len(tool_input) > 1200:
         tool_input = tool_input[:1200] + "…"
@@ -202,7 +227,9 @@ def approve_permission(chat_id: str, sender_id: str, chat_type: str, decision: s
     with _permission_lock:
         candidates = [
             item for item in _pending_permissions.values()
-            if item["request"].get("chat_id") == chat_id and not item.get("resolved")
+            if item["request"].get("chat_id") == chat_id
+            and item["request"].get("tool_name") != "AskUserQuestion"
+            and not item.get("resolved")
         ]
         if not candidates:
             return "当前没有等待确认的工具权限请求。"
@@ -222,6 +249,33 @@ def approve_permission(chat_id: str, sender_id: str, chat_type: str, decision: s
         with _permission_lock:
             _session_permission_grants.setdefault(scope, set()).add(pattern)
     return "已允许本次工具调用。" if decision in {"once", "session"} else "已拒绝本次工具调用。"
+
+
+def answer_user_question(chat_id: str, sender_id: str, chat_type: str, answer: str) -> str:
+    """Resume the latest pending AskUserQuestion for its original requester."""
+    with _permission_lock:
+        candidates = [
+            item for item in _pending_permissions.values()
+            if item["request"].get("chat_id") == chat_id
+            and item["request"].get("sender_id") == sender_id
+            and item["request"].get("chat_type", "p2p") == chat_type
+            and item["request"].get("tool_name") == "AskUserQuestion"
+            and not item.get("resolved")
+        ]
+        if not candidates:
+            return "当前没有等待你回答的 Claude 问题。"
+        item = max(candidates, key=lambda value: value["request"].get("created_at", 0))
+        item["resolved"] = True
+    request = item["request"]
+    questions = (request.get("tool_input") or {}).get("questions") or []
+    response = {
+        "decision": "allow",
+        "message": "已收到用户回答。",
+        "updated_input": {"questions": questions, "response": answer},
+    }
+    response_path = Path(item["directory"]) / f"response-{request['token']}.json"
+    response_path.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+    return "已提交回答，Claude 正在继续处理。"
 
 # ═══════════════════════════════════════════════════════════════════════
 # 会话持久化（业务上下文按群共享，CLI resume 链再按 profile 隔离）

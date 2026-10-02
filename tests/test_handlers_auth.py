@@ -1,4 +1,6 @@
 import sys
+import json
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -159,6 +161,47 @@ class HandlerAuthTests(unittest.TestCase):
         self.assertNotIn("LARK_USER_AUTH_REQUIRED", result)
         self.assertIn("授权已完成", result)
         self.assertEqual(handlers.runtime.run.call_count, 2)
+
+    def test_explicit_question_answer_resumes_pending_claude_call_without_new_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            request = {
+                "token": "question-token",
+                "chat_id": "chat",
+                "sender_id": "user",
+                "chat_type": "p2p",
+                "tool_name": "AskUserQuestion",
+                "tool_input": {
+                    "questions": [{
+                        "header": "格式",
+                        "question": "使用哪种格式？",
+                        "options": [
+                            {"label": "摘要", "description": "简短"},
+                            {"label": "详细", "description": "完整"},
+                        ],
+                        "multiSelect": False,
+                    }],
+                },
+                "created_at": 1,
+            }
+            with handlers.runtime._permission_lock:
+                handlers.runtime._pending_permissions["question-token"] = {
+                    "request": request,
+                    "directory": directory,
+                }
+            self.addCleanup(
+                lambda: handlers.runtime._pending_permissions.pop("question-token", None)
+            )
+
+            result = handlers.process_message(
+                "回答：摘要", "chat", "user", self.client, chat_type="p2p"
+            )
+
+            self.assertEqual(result, "已提交回答，Claude 正在继续处理。")
+            handlers.runtime.run.assert_not_called()
+            response = json.loads(
+                (Path(directory) / "response-question-token.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(response["updated_input"]["response"], "摘要")
 
 
 if __name__ == "__main__":
