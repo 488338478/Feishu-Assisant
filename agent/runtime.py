@@ -687,6 +687,7 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
 
     result_text, new_sid, last_text, tool_count = "", session_id, "", 0
     result_error, assistant_error = "", ""
+    compact_complete = False
     try:
         for line in proc.stdout:
             line = line.strip()
@@ -699,6 +700,8 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
             etype = evt.get("type")
             if evt.get("session_id"):
                 new_sid = evt["session_id"]
+            if etype == "system" and evt.get("subtype") == "compact_boundary":
+                compact_complete = True
             if etype == "assistant":
                 message = evt.get("message") or {}
                 content = message.get("content") or []
@@ -747,6 +750,12 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
 
     if killed["v"]:
         raise TimeoutError(f"claude 超时 ({timeout}s)")
+    # A successful native /compact can emit only a system boundary event,
+    # without an assistant answer or a nonempty result. Other commands still
+    # require their normal reply; later errors/failed exits take precedence.
+    if (prompt.strip() == "/compact" and compact_complete and not result_text
+            and not result_error and not assistant_error and proc.returncode == 0):
+        result_text = "上下文压缩完成。"
     if result_error or assistant_error or proc.returncode not in (0, None) or not result_text:
         stderr = ""
         try: stderr = (proc.stderr.read() or "")[:500]

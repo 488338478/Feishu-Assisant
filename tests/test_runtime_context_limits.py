@@ -52,6 +52,57 @@ class ContextLimitTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Prompt is too long'):
                 runtime._run_claude('继续', 'sid', Path(self.tmp.name), [], 5)
 
+    def test_manual_compaction_accepts_boundary_without_normal_reply(self):
+        for with_result in (False, True):
+            with self.subTest(with_result=with_result):
+                events = [
+                    {'type': 'system', 'subtype': 'init', 'session_id': 'sid'},
+                    {'type': 'system', 'subtype': 'compact_boundary', 'session_id': 'sid',
+                     'compact_metadata': {'trigger': 'manual', 'pre_tokens': 179563}},
+                ]
+                if with_result:
+                    events.append({'type': 'result', 'subtype': 'success', 'is_error': False,
+                                   'result': '', 'session_id': 'sid'})
+                proc = self.process(events)
+                with patch.object(runtime.subprocess, 'Popen', return_value=proc):
+                    result = runtime._compact_session('sid', Path(self.tmp.name), [], 5,
+                                                       runtime.DEFAULT_MODEL)
+                self.assertEqual(result, ('sid', 0))
+
+    def test_empty_compaction_without_boundary_is_still_a_failure(self):
+        proc = self.process([
+            {'type': 'system', 'subtype': 'init', 'session_id': 'sid'},
+            {'type': 'result', 'subtype': 'success', 'result': '', 'session_id': 'sid'},
+        ])
+        with patch.object(runtime.subprocess, 'Popen', return_value=proc):
+            with self.assertRaisesRegex(RuntimeError, 'empty response'):
+                runtime._compact_session('sid', Path(self.tmp.name), [], 5, runtime.DEFAULT_MODEL)
+
+    def test_compact_boundary_does_not_hide_a_later_failure(self):
+        for structured_failure, stderr, expected_error in (
+            (False, 'gateway failed', 'gateway failed'),
+            (True, 'gateway failed', 'gateway failed'),
+            (False, '', 'exit code 1'),
+        ):
+            with self.subTest(structured_failure=structured_failure, stderr=stderr):
+                events = [{'type': 'system', 'subtype': 'compact_boundary', 'session_id': 'sid'}]
+                if structured_failure:
+                    events.append({'type': 'result', 'is_error': True, 'errors': ['gateway failed']})
+                proc = self.process(events, returncode=0 if structured_failure else 1,
+                                    stderr=stderr)
+                with patch.object(runtime.subprocess, 'Popen', return_value=proc):
+                    with self.assertRaisesRegex(RuntimeError, expected_error):
+                        runtime._compact_session('sid', Path(self.tmp.name), [], 5,
+                                                 runtime.DEFAULT_MODEL)
+
+    def test_compact_boundary_does_not_replace_a_missing_normal_answer(self):
+        proc = self.process([
+            {'type': 'system', 'subtype': 'compact_boundary', 'session_id': 'sid'},
+        ])
+        with patch.object(runtime.subprocess, 'Popen', return_value=proc):
+            with self.assertRaisesRegex(RuntimeError, 'empty response'):
+                runtime._run_claude('继续', 'sid', Path(self.tmp.name), [], 5)
+
     def test_nonzero_exit_is_not_success_even_with_partial_text(self):
         proc = self.process([
             {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': '处理中'}]}},
