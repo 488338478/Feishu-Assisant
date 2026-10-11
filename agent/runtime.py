@@ -454,7 +454,7 @@ def confirm_compaction(chat_id: str, sender_id: str = "", chat_type: str = "p2p"
         return "当前工作区不可用，暂时无法压缩上下文。", {"compacted": False}
     tier = resolve_tier(sender_id)
     deny = TIER_DENY.get(tier, TIER_DENY["read"])
-    if profile == "dev" and tier == "submit" and not _explicit_p4_submit_intent(text):
+    if profile == "dev" and tier == "submit" and not _explicit_p4_submit_intent(pending["text"]):
         deny = deny + ["Bash(p4 submit:*)"]
     model = resolve_model(chat_id, chat_type)
     timeout = PROFILE_TIMEOUT.get(profile, CLAUDE_TIMEOUT)
@@ -499,11 +499,47 @@ def _discard_active_session(scope_key: str, expected_session_id: str) -> None:
         data = sessions.get(scope_key)
         if data and data.get("active") == expected_session_id:
             data["active"] = None
+            data["estimated_chars"] = 0
             _save_sessions()
 
 
 def _is_missing_session_error(error: Exception) -> bool:
     return "No conversation found with session ID:" in str(error)
+
+
+def _is_context_limit_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(marker in message for marker in (
+        "prompt is too long", "input is too long", "context_length_exceeded",
+        "maximum context length", "exceeds the context window",
+    ))
+
+
+class ClaudeRunError(RuntimeError):
+    """Keep a session created before a failed turn available for recovery."""
+
+    def __init__(self, message: str, session_id: str | None, tools: int):
+        super().__init__(message)
+        self.session_id = session_id
+        self.tools = tools
+
+
+def _content_chars(content) -> int:
+    """Count streamed text/tool payloads without treating image base64 as text."""
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(_content_chars(block) for block in content)
+    if not isinstance(content, dict):
+        return 0
+    kind = content.get("type")
+    if kind == "tool_result":
+        return _content_chars(content.get("content"))
+    if kind == "tool_use":
+        return len(json.dumps(content.get("input") or {}, ensure_ascii=False))
+    if kind in {"text", "thinking"}:
+        return len(content.get(kind) or "")
+    return 0
 
 # per-chat 锁：同一群的 resume 链不交错
 _chat_locks: dict[str, threading.Lock] = {}
@@ -549,7 +585,8 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                 progress_cb=None, permission_cb=None,
                 allowed_tools: list[str] | None = None,
                 permission_context: dict | None = None,
-                bypass_permissions: bool = False) -> tuple[str, str | None, int]:
+                bypass_permissions: bool = False,
+                context_cb=None) -> tuple[str, str | None, int]:
     """返回 (结果文本, session_id, 工具调用次数)。超时抛 TimeoutError。"""
     model = model if model in MODEL_LABELS else DEFAULT_MODEL
     cmd = [CLAUDE_EXE, "-p", prompt, "--model", model,
@@ -649,6 +686,7 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
     watchdog.start()
 
     result_text, new_sid, last_text, tool_count = "", session_id, "", 0
+    result_error, assistant_error = "", ""
     try:
         for line in proc.stdout:
             line = line.strip()
@@ -659,8 +697,20 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
             except json.JSONDecodeError:
                 continue
             etype = evt.get("type")
+            if evt.get("session_id"):
+                new_sid = evt["session_id"]
             if etype == "assistant":
-                for block in (evt.get("message", {}).get("content") or []):
+                message = evt.get("message") or {}
+                content = message.get("content") or []
+                if context_cb:
+                    context_cb(message.get("usage") or {}, _content_chars(content))
+                assistant_error = ""
+                if evt.get("error"):
+                    assistant_error = "\n".join(
+                        block.get("text", "") for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ) or str(evt["error"])
+                for block in content:
                     if not isinstance(block, dict):
                         continue
                     if block.get("type") == "tool_use":
@@ -673,9 +723,17 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
                                 pass
                     elif block.get("type") == "text" and block.get("text"):
                         last_text = block["text"]
+            elif etype == "user" and context_cb:
+                content = (evt.get("message") or {}).get("content") or []
+                context_cb({}, _content_chars([
+                    block for block in content
+                    if isinstance(block, dict) and block.get("type") == "tool_result"
+                ]))
             elif etype == "result":
                 result_text = evt.get("result", "") or last_text
-                new_sid = evt.get("session_id", new_sid)
+                if evt.get("is_error") or str(evt.get("subtype", "")).startswith("error"):
+                    result_error = "\n".join(str(error) for error in (evt.get("errors") or []))
+                    result_error = result_error or evt.get("result") or assistant_error or "Claude run failed"
         proc.wait()
     finally:
         watchdog.cancel()
@@ -689,13 +747,15 @@ def _run_claude(prompt: str, session_id: str | None, cwd: Path,
 
     if killed["v"]:
         raise TimeoutError(f"claude 超时 ({timeout}s)")
-    if not result_text:
+    if result_error or assistant_error or proc.returncode not in (0, None) or not result_text:
         stderr = ""
         try: stderr = (proc.stderr.read() or "")[:500]
         except Exception: pass
-        if proc.returncode not in (0, None):
-            raise RuntimeError(stderr or f"claude exit code {proc.returncode}")
-        raise RuntimeError(stderr or "Claude empty response")
+        failure = result_error or assistant_error or stderr
+        if not failure:
+            failure = (result_text or f"claude exit code {proc.returncode}"
+                       if proc.returncode not in (0, None) else "Claude empty response")
+        raise ClaudeRunError(failure, new_sid, tool_count)
     return result_text, new_sid, tool_count
 
 def _build_prompt(text: str, sender_id: str, tier: str, profile: str,
@@ -820,6 +880,14 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
 
     t0 = time.time()
     ok, err, tools, session_recovered = True, "", 0, False
+    needs_compaction = False
+    pending_request = {
+        "chat_id": chat_id, "text": text, "sender_id": sender_id, "profile": profile,
+        "force_user_domain": force_user_domain, "chat_type": chat_type,
+        "group_history_context": group_history_context, "group_reply_to": group_reply_to,
+        "group_thread_id": group_thread_id, "group_history_exhausted": group_history_exhausted,
+        "image_refs": image_refs,
+    }
     image_used = {'value': bool(image_refs)}
     def image_progress(brief, count):
         if brief in ('mcp__assistant_image__read_image', 'mcp__assistant_image__read_document_image'):
@@ -837,22 +905,20 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 data.pop('pending_compaction', None)
                 _save_sessions()
         session_id = data.get("active")
+        context_chars = _context_estimate(conversation_scope_key) + len(prompt)
+
+        def observe_context(usage: dict, added_chars: int):
+            nonlocal context_chars
+            # Assistant-message usage is per API request; result.usage is a
+            # multi-turn total and must not be mistaken for the context size.
+            input_tokens = sum(usage.get(key) or 0 for key in (
+                "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
+            ))
+            context_chars = max(context_chars, int(input_tokens * 4)) + added_chars
+
         if (session_id and not _skip_compaction and
-                _context_estimate(conversation_scope_key) + len(prompt)
-                >= CONTEXT_COMPACTION_THRESHOLD_CHARS):
-            _save_pending_compaction(conversation_scope_key, {
-                "chat_id": chat_id,
-                "text": text,
-                "sender_id": sender_id,
-                "profile": profile,
-                "force_user_domain": force_user_domain,
-                "chat_type": chat_type,
-                "group_history_context": group_history_context,
-                "group_reply_to": group_reply_to,
-                "group_thread_id": group_thread_id,
-                "group_history_exhausted": group_history_exhausted,
-                "image_refs": image_refs,
-            })
+                context_chars >= CONTEXT_COMPACTION_THRESHOLD_CHARS):
+            _save_pending_compaction(conversation_scope_key, pending_request)
             return _compaction_message(), {
                 "ok": True,
                 "tools": 0,
@@ -868,6 +934,7 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                                                      progress_cb=image_progress,
                                                      permission_cb=permission_cb,
                                                      allowed_tools=allowed_tools,
+                                                     context_cb=observe_context,
                                                      bypass_permissions=bypass_permissions,
                                                      permission_context={
                                                          "chat_id": chat_id, "sender_id": sender_id,
@@ -879,12 +946,14 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                 if not session_id or not _is_missing_session_error(e):
                     raise
                 _discard_active_session(conversation_scope_key, session_id)
+                context_chars = len(prompt)
                 session_recovered = True
                 print(f"[RUNTIME] stale session={session_id[:8]} profile={profile}; retrying", flush=True)
                 result, new_sid, retry_tools = _run_claude(
                     prompt, None, cwd, deny, timeout, model=model, progress_cb=image_progress,
                     permission_cb=permission_cb, allowed_tools=allowed_tools,
                     bypass_permissions=bypass_permissions,
+                    context_cb=observe_context,
                     permission_context={
                         "chat_id": chat_id, "sender_id": sender_id,
                         "profile": profile, "tier": tier, "chat_type": chat_type,
@@ -892,24 +961,44 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
                     })
                 tools += retry_tools
             if new_sid:
+                context_chars = max(
+                    context_chars,
+                    _context_estimate(conversation_scope_key) + len(prompt) + len(result),
+                )
                 _add_to_history(conversation_scope_key, new_sid)
                 with sessions_lock:
                     data = _get_chat_data(conversation_scope_key)
                     if image_used['value']:
                         data['image_owner'] = sender_id
-                    data["estimated_chars"] = (
-                        _context_estimate(conversation_scope_key)
-                        + len(prompt) + len(result)
-                    )
-                    _save_sessions()
         except (TimeoutError, subprocess.TimeoutExpired):
             ok, err = False, "timeout"
             result = f"处理超时（{timeout}秒），请简化问题或稍后再试。"
         except Exception as e:
             ok, err = False, str(e)[:200]
             result = f"处理出错：{e}"
+            tools = max(tools, getattr(e, "tools", 0))
+            if _is_context_limit_error(e):
+                failed_sid = getattr(e, "session_id", None) or data.get("active")
+                if failed_sid:
+                    _add_to_history(conversation_scope_key, failed_sid)
+                    context_chars = max(context_chars, CONTEXT_COMPACTION_THRESHOLD_CHARS)
+                if failed_sid and not _skip_compaction:
+                    _save_pending_compaction(conversation_scope_key, pending_request)
+                    result = "模型报告上下文已超出上限。" + _compaction_message()
+                    ok, err, needs_compaction = True, "", True
+                else:
+                    result = (
+                        "压缩后本次请求仍超出模型上下文上限，请分段提问或缩小单次读取范围；"
+                        "也可发送「清除上下文」后重试。" if failed_sid else
+                        "本次输入超出模型上下文上限，请分段发送或缩小单次读取范围后重试。"
+                    )
+                    err = "context_too_long"
             print(f"[RUNTIME] error: {e}", flush=True)
         finally:
+            if _get_chat_data(conversation_scope_key).get("active"):
+                with sessions_lock:
+                    _get_chat_data(conversation_scope_key)["estimated_chars"] = context_chars
+                    _save_sessions()
             # A tool result can already be persisted by Claude before a later
             # gateway failure prevents its final response/session ID.
             if image_used['value']:
@@ -923,7 +1012,9 @@ def run(chat_id: str, text: str, sender_id: str = "", profile: str | None = None
         "profile": profile, "tier": tier, "ok": ok, "err": err,
         "model": model,
         "session_recovered": session_recovered,
+        "needs_compaction": needs_compaction,
+        "estimated_chars": context_chars,
         "duration_s": duration, "tools": tools, "text": text[:200],
     })
     return result, {"ok": ok, "tools": tools, "duration": duration, "err": err,
-                    "session_recovered": session_recovered}
+                    "session_recovered": session_recovered, "needs_compaction": needs_compaction}

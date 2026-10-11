@@ -28,7 +28,7 @@
 - profile 按 `user_profiles` → `chat_profiles` → `default_profile` 解析，read/edit/submit tier 再独立收窄工具权限。
 - 支持在飞书发送「切换模型 DeepSeek 4.1」「切换模型 DeepSeek 4.0 Pro」；模糊切换意图会返回明确指令。
 - 同群共享群聊记录和业务记忆，Claude resume 链按 profile 隔离；失效 session 会自动清除并重试一次。
-- 会话接近估算上下文上限时会先询问；用户回复「确认压缩」后执行 Claude Code `/compact` 并继续原请求，回复「取消压缩」则保留原会话。
+- 上下文估算包含工具返回和模型报告的输入用量（含缓存）；接近上限或模型返回 `Prompt is too long` 时保存原请求并询问。回复「确认压缩」后执行 Claude Code `/compact` 并继续原请求，回复「取消压缩」则保留原会话。压缩失败时可发送「清除上下文」后重新提问；单次输入或读取过大时需分段处理。
 - dev 模式通过 P4 CLI 和工作区文件访问代码，不操作 P4V 图形界面。服务器部署脚本会验证 agent 写权限、dev Write/Edit 配置和 systemd 写路径。
 
 Windows 可运行 `start-assistant.bat`；终端启动需在本包父目录执行：
